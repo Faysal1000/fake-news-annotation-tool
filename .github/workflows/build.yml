@@ -23,9 +23,9 @@ jobs:
           - os: windows-latest
             artifact_name: FakeNewsAnnotator-Windows.exe
             pyinstaller_args: ""
-          - os: macos-13        # Intel Mac (x86_64)
-            artifact_name: FakeNewsAnnotator-macOS-Intel
-            pyinstaller_args: ""
+          # - os: macos-13        # Intel Mac (x86_64)
+          #   artifact_name: FakeNewsAnnotator-macOS-Intel
+          #   pyinstaller_args: ""
           - os: macos-latest    # Apple Silicon (ARM64)
             artifact_name: FakeNewsAnnotator-macOS-AppleSilicon
             pyinstaller_args: ""
