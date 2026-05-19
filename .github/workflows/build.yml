@@ -63,14 +63,7 @@ jobs:
       # --noconfirm:  Overwrite without asking
       # --clean:      Fresh build every time
       - name: Build executable
-        run: |
-          python -m PyInstaller \
-            --name FakeNewsAnnotator \
-            --onefile \
-            --windowed \
-            --noconfirm \
-            --clean \
-            annotator_tool.py
+        run: python -m PyInstaller --name FakeNewsAnnotator --onefile --windowed --noconfirm --clean annotator_tool.py
 
       # --- Step 6: Rename the output to a descriptive platform-specific name ---
       - name: Rename output (Windows)
