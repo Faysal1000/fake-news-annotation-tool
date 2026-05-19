@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# PyInstaller build output
+build/
+dist/
+*.spec
+
+# Dataset files (created by the tool at runtime)
+dataset.csv
+images/
+.annotator_config.json
+
+# IDE
+.vscode/
+.idea/
