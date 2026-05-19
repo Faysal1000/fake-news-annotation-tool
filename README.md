@@ -41,8 +41,19 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
      ```
      *(Make sure to include the space after `-cr`)*
    - Then **drag and drop** the `FakeNewsAnnotator.app` icon directly into the Terminal window. It will automatically fill in the correct path.
-   - Press **Enter**. You can now double-click the app to open it normally!
-4. **Windows/Linux users**: Double-click the executable to launch the tool.
+4. **Windows users**: 
+   - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to download it instantly:
+     ```cmd
+     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Windows.exe
+     ```
+   - Double-click the downloaded `.exe` to launch the tool.
+
+5. **Linux users**:
+   - Open your terminal and paste this command to download it and make it executable:
+     ```bash
+     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux
+     ```
+   - Double-click the file, or run `./FakeNewsAnnotator-Linux` to launch the tool.
 
 The tool will automatically create `dataset.csv`, `images/` folder, and a config file **in the same folder** where the executable is located.
 
