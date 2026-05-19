@@ -22,9 +22,20 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 1. **Download** the file for your OS from the [Releases](../../releases/latest) page
 2. **Place it in a folder** (e.g., a new folder on your Desktop)
 3. **macOS users (Important)**:
-   - Double-click the `.zip` file to extract `FakeNewsAnnotator.app`.
-   - Because this app is not signed with a paid Apple Developer account, macOS will quarantine it and it will silently fail to open.
-   - **To fix this**, open the **Terminal** app on your Mac and type:
+   - Because this app is not signed with a paid Apple Developer account, macOS will quarantine it if downloaded through a web browser, and it will silently fail to open.
+   - **Easiest solution (No Quarantine):** Open **Terminal** and paste the exact command for your Mac. This downloads and extracts the app directly, completely bypassing Apple's security quarantine so you can just double-click to open it:
+     
+     *For Mac M1/M2/M3/M4 (Apple Silicon):*
+     ```bash
+     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
+     ```
+     
+     *For older Intel Macs:*
+     ```bash
+     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-Intel.zip && unzip FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
+     ```
+
+   - **Alternative manual fix:** If you already downloaded the `.zip` through Safari/Chrome and extracted it, open **Terminal** and type:
      ```bash
      xattr -cr 
      ```

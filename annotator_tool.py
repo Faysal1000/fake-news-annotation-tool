@@ -80,9 +80,10 @@ from datetime import datetime        # Timestamps for each saved entry
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle
     _exe_path = Path(sys.executable).resolve()
-    # On macOS, if it's inside a .app bundle, navigate up 3 levels to the folder containing the .app
+    # On macOS, if it's inside a .app bundle, navigate up 4 levels to the folder containing the .app
+    # _exe_path = .../FakeNewsAnnotator.app/Contents/MacOS/FakeNewsAnnotator
     if ".app/Contents/MacOS" in _exe_path.as_posix():
-        SCRIPT_DIR = _exe_path.parents[2]
+        SCRIPT_DIR = _exe_path.parents[3]
     else:
         SCRIPT_DIR = _exe_path.parent
 else:
