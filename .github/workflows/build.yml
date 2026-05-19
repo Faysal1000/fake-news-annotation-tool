@@ -60,9 +60,9 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller
 
-      # --- Step 5: Build the standalone single-file executable ---
+      # --- Step 5: Build the standalone executable ---
       - name: Build executable
-        run: python -m PyInstaller --name FakeNewsAnnotator --onefile --windowed --noconfirm --clean annotator_tool.py
+        run: python build.py
 
       # --- Step 6: Package the output ---
       - name: Package Windows
