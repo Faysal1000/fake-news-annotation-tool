@@ -13,15 +13,16 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 | File | Platform |
 |------|----------|
 | `FakeNewsAnnotator-Windows.exe` | Windows 10/11 (64-bit) |
-| `FakeNewsAnnotator-macOS-AppleSilicon` | macOS (Apple M1/M2/M3/M4) |
-| `FakeNewsAnnotator-macOS-Intel` | macOS (Intel processors) |
+| `FakeNewsAnnotator-macOS-AppleSilicon.zip` | macOS (Apple M1/M2/M3/M4) |
+| `FakeNewsAnnotator-macOS-Intel.zip` | macOS (Intel processors) |
 | `FakeNewsAnnotator-Linux` | Ubuntu / Debian / Fedora |
 
 ### How to run
 
 1. **Download** the file for your OS from the [Releases](../../releases/latest) page
 2. **Place it in a folder** (e.g., a new folder on your Desktop)
-3. **Double-click** the file to launch the tool
+3. **If downloading a `.zip` (macOS)**: Double-click to extract it first. You will get a `FakeNewsAnnotator.app` file.
+4. **Double-click** the executable (or `.app`) to launch the tool
 
 > **macOS users:** If macOS blocks the app, right-click → "Open" → click "Open" in the dialog. You only need to do this once.
 

@@ -22,16 +22,16 @@ jobs:
         include:
           - os: windows-latest
             artifact_name: FakeNewsAnnotator-Windows.exe
-            pyinstaller_args: ""
+            artifact_path: dist/FakeNewsAnnotator-Windows.exe
           # - os: macos-13        # Intel Mac (x86_64)
-          #   artifact_name: FakeNewsAnnotator-macOS-Intel
-          #   pyinstaller_args: ""
+          #   artifact_name: FakeNewsAnnotator-macOS-Intel.zip
+          #   artifact_path: dist/FakeNewsAnnotator-macOS-Intel.zip
           - os: macos-latest    # Apple Silicon (ARM64)
-            artifact_name: FakeNewsAnnotator-macOS-AppleSilicon
-            pyinstaller_args: ""
+            artifact_name: FakeNewsAnnotator-macOS-AppleSilicon.zip
+            artifact_path: dist/FakeNewsAnnotator-macOS-AppleSilicon.zip
           - os: ubuntu-latest
             artifact_name: FakeNewsAnnotator-Linux
-            pyinstaller_args: ""
+            artifact_path: dist/FakeNewsAnnotator-Linux
 
     runs-on: ${{ matrix.os }}
 
@@ -61,36 +61,32 @@ jobs:
           pip install pyinstaller
 
       # --- Step 5: Build the standalone single-file executable ---
-      # --onefile:    Packs everything into ONE file (no folders needed)
-      # --windowed:   No console window (it's a GUI app)
-      # --noconfirm:  Overwrite without asking
-      # --clean:      Fresh build every time
       - name: Build executable
         run: python -m PyInstaller --name FakeNewsAnnotator --onefile --windowed --noconfirm --clean annotator_tool.py
 
-      # --- Step 6: Rename the output to a descriptive platform-specific name ---
-      - name: Rename output (Windows)
+      # --- Step 6: Package the output ---
+      - name: Package Windows
         if: runner.os == 'Windows'
-        run: |
-          move dist\FakeNewsAnnotator.exe "dist\${{ matrix.artifact_name }}"
+        run: move dist\FakeNewsAnnotator.exe "dist\${{ matrix.artifact_name }}"
 
-      - name: Rename output (macOS/Linux)
-        if: runner.os != 'Windows'
+      - name: Package macOS
+        if: runner.os == 'macOS'
+        run: |
+          cd dist
+          zip -r "${{ matrix.artifact_name }}" FakeNewsAnnotator.app
+
+      - name: Package Linux
+        if: runner.os == 'Linux'
         run: |
           mv dist/FakeNewsAnnotator "dist/${{ matrix.artifact_name }}"
+          chmod +x "dist/${{ matrix.artifact_name }}"
 
-      # --- Step 7: Make executable on Unix systems ---
-      - name: Make executable
-        if: runner.os != 'Windows'
-        run: chmod +x "dist/${{ matrix.artifact_name }}"
-
-      # --- Step 8: Upload the built executable as a GitHub artifact ---
-      # This makes it downloadable from the Actions tab even without a release.
+      # --- Step 7: Upload the packaged artifact ---
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_path }}
           retention-days: 90
 
   # ==========================================================================
