@@ -4,6 +4,11 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 **No coding knowledge required** — download a single file, double-click, and start annotating.
 
+<br>
+<p align="center">
+  <img src="assets/annotator_ui.png" alt="Fake News Annotator UI" width="800">
+</p>
+
 ---
 
 ## ⬇️ Download & Run
