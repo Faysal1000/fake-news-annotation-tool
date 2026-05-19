@@ -21,12 +21,17 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 
 1. **Download** the file for your OS from the [Releases](../../releases/latest) page
 2. **Place it in a folder** (e.g., a new folder on your Desktop)
-3. **If downloading a `.zip` (macOS)**: Double-click to extract it first. You will get a `FakeNewsAnnotator.app` file.
-4. **Double-click** the executable (or `.app`) to launch the tool
-
-> **macOS users:** If macOS blocks the app, right-click → "Open" → click "Open" in the dialog. You only need to do this once.
-
-> **Linux users:** You may need to make the file executable first: `chmod +x FakeNewsAnnotator-Linux`, then double-click or run `./FakeNewsAnnotator-Linux`.
+3. **macOS users (Important)**:
+   - Double-click the `.zip` file to extract `FakeNewsAnnotator.app`.
+   - Because this app is not signed with a paid Apple Developer account, macOS will quarantine it and it will silently fail to open.
+   - **To fix this**, open the **Terminal** app on your Mac and type:
+     ```bash
+     xattr -cr 
+     ```
+     *(Make sure to include the space after `-cr`)*
+   - Then **drag and drop** the `FakeNewsAnnotator.app` icon directly into the Terminal window. It will automatically fill in the correct path.
+   - Press **Enter**. You can now double-click the app to open it normally!
+4. **Windows/Linux users**: Double-click the executable to launch the tool.
 
 The tool will automatically create `dataset.csv`, `images/` folder, and a config file **in the same folder** where the executable is located.
 
