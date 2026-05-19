@@ -79,7 +79,12 @@ from datetime import datetime        # Timestamps for each saved entry
 # the executable, so that dataset.csv and images/ appear next to the .app/.exe.
 if getattr(sys, 'frozen', False):
     # Running as a PyInstaller bundle
-    SCRIPT_DIR = Path(sys.executable).parent.resolve()
+    _exe_path = Path(sys.executable).resolve()
+    # On macOS, if it's inside a .app bundle, navigate up 3 levels to the folder containing the .app
+    if ".app/Contents/MacOS" in _exe_path.as_posix():
+        SCRIPT_DIR = _exe_path.parents[2]
+    else:
+        SCRIPT_DIR = _exe_path.parent
 else:
     # Running as a normal Python script
     SCRIPT_DIR = Path(__file__).parent.resolve()

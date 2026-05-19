@@ -155,6 +155,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) t
 | Problem | Solution |
 |---------|----------|
 | macOS blocks the app | Right-click → "Open" → click "Open" in the dialog |
+| macOS app crashes immediately | Download the `.zip` file from Releases and extract it. Do not download the raw binary. |
 | Linux: "Permission denied" | Run `chmod +x FakeNewsAnnotator-Linux` first |
 | Windows SmartScreen warning | Click "More info" → "Run anyway" |
 | Drag and drop not working | Use the **Browse** or **Paste** buttons instead |
