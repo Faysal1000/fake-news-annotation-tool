@@ -23,16 +23,16 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 2. **Place it in a folder** (e.g., a new folder on your Desktop)
 3. **macOS users (Important)**:
    - Because this app is not signed with a paid Apple Developer account, macOS will quarantine it if downloaded through a web browser, and it will silently fail to open.
-   - **Easiest solution (No Quarantine):** Open **Terminal** and paste the exact command for your Mac. This downloads and extracts the app directly, completely bypassing Apple's security quarantine so you can just double-click to open it:
+   - **Easiest solution (No Quarantine):** Open **Terminal** and paste the exact command for your Mac. This will navigate to your Desktop, download the app there, and extract it so you can just double-click to open it:
      
      *For Mac M1/M2/M3/M4 (Apple Silicon):*
      ```bash
-     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
+     cd ~/Desktop && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
      ```
      
      *For older Intel Macs:*
      ```bash
-     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-Intel.zip && unzip FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
+     cd ~/Desktop && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-Intel.zip && unzip FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
      ```
 
    - **Alternative manual fix:** If you already downloaded the `.zip` through Safari/Chrome and extracted it, open **Terminal** and type:
@@ -41,19 +41,21 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
      ```
      *(Make sure to include the space after `-cr`)*
    - Then **drag and drop** the `FakeNewsAnnotator.app` icon directly into the Terminal window. It will automatically fill in the correct path.
+   - Press **Enter**. You can now double-click the app to open it normally!
+
 4. **Windows users**: 
-   - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to download it instantly:
+   - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to download it directly to your Desktop:
      ```cmd
-     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Windows.exe
+     cd %USERPROFILE%\Desktop && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Windows.exe
      ```
-   - Double-click the downloaded `.exe` to launch the tool.
+   - Go to your Desktop and double-click the downloaded `.exe` to launch the tool.
 
 5. **Linux users**:
-   - Open your terminal and paste this command to download it and make it executable:
+   - Open your terminal and paste this command to download it to your Desktop and make it executable:
      ```bash
-     curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux
+     cd ~/Desktop && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux
      ```
-   - Double-click the file, or run `./FakeNewsAnnotator-Linux` to launch the tool.
+   - Go to your Desktop and double-click the file, or run `./FakeNewsAnnotator-Linux` to launch the tool.
 
 The tool will automatically create `dataset.csv`, `images/` folder, and a config file **in the same folder** where the executable is located.
 
