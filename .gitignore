@@ -19,3 +19,7 @@ images/
 # IDE
 .vscode/
 .idea/
+
+# Environment variables
+.env
+

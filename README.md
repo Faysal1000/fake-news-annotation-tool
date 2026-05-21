@@ -210,3 +210,32 @@ News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, We
 - **Misinformation** — False information spread without intent to deceive
 - **Rumor** — Unverified claims spread through informal channels
 - **Clickbait** — Misleading headlines designed to attract clicks
+
+---
+
+## 🤖 Telegram Link Routing Bot
+
+This project includes a built-in Telegram bot (`telegram_bot.py`) to easily route news links to assigned annotators. If you find a news article that belongs to another team member's assigned category, you can just text the link to the bot, and it will instantly forward it to them.
+
+### Setup Instructions
+
+1. Create a Telegram bot using [BotFather](https://t.me/botfather) and get your Bot Token.
+2. Rename `.env.example` to `.env` and insert your token:
+   ```env
+   TELEGRAM_BOT_TOKEN=your_token_here
+   ```
+3. Have all team members start a conversation with your bot and send the command `/myid` to get their unique Chat IDs.
+4. Update the `CHAT_IDS` and `CATEGORIES` dictionaries in `telegram_bot.py` with your team's IDs and assigned categories.
+5. Run the bot:
+   ```bash
+   pip install python-dotenv pyTelegramBotAPI
+   python telegram_bot.py
+   ```
+
+### Usage
+
+Simply send a command followed by the link to the bot:
+```
+/politics https://news-article-link.com
+```
+Or use the provided shortcuts (e.g., `/p https://news-article-link.com`). The bot will automatically detect who is in charge of Politics and forward the message to them. Type `/usage` in the bot to see all configured shortcuts.
