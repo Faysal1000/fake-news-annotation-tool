@@ -194,6 +194,45 @@ def get_entry_count():
         return sum(1 for _ in csv.DictReader(f))
 
 
+def get_label_counts():
+    """Count entries by label (Fake/Real), fake news subcategories, and news categories.
+    
+    Reads the CSV and tallies:
+      - Total entries
+      - Fake entries
+      - Real entries
+      - Fake subcategory breakdown (Misinformation, Rumor, Clickbait)
+      - News category breakdown (Politics, Health, etc.)
+    
+    Returns:
+        dict: Keys 'total', 'fake', 'real', 'fake_subcategories' (a dict
+              mapping subcategory name to count), and 'news_categories'
+              (a dict mapping category name to count).
+    """
+    result = {"total": 0, "fake": 0, "real": 0,
+              "fake_subcategories": {"Misinformation": 0, "Rumor": 0, "Clickbait": 0},
+              "news_categories": {}}
+    if not CSV_PATH.exists():
+        return result
+    with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            result["total"] += 1
+            label = row.get("label", "").strip()
+            if label == "Fake":
+                result["fake"] += 1
+                sub = row.get("multi_category", "").strip()
+                if sub in result["fake_subcategories"]:
+                    result["fake_subcategories"][sub] += 1
+            elif label == "Real":
+                result["real"] += 1
+            # Count news categories
+            cat = row.get("category", "").strip()
+            if cat:
+                result["news_categories"][cat] = result["news_categories"].get(cat, 0) + 1
+    return result
+
+
 def save_config(annotator_name):
     """Persist the annotator's name to a hidden JSON config file.
     
@@ -313,9 +352,14 @@ class AnnotatorTool(ctk.CTk):
         ctk.CTkLabel(main, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=26, weight="bold")).pack(pady=(5, 2))
 
-        # ----- Stats bar: shows total entry count and image count -----
+        # ----- Stats bar: shows total entry count, image count, and label counts -----
         self.stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=13))
-        self.stats_label.pack(pady=(0, 10))
+        self.stats_label.pack(pady=(0, 2))
+
+        # ----- Category stats bar: shows news category counts on a second line -----
+        self.category_stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=12),
+                                                  text_color="#aaa")
+        self.category_stats_label.pack(pady=(0, 10))
 
         # ----- ANNOTATOR NAME FIELD -----
         annotator_row = ctk.CTkFrame(main, fg_color="transparent")
@@ -979,15 +1023,33 @@ class AnnotatorTool(ctk.CTk):
     def _update_stats(self):
         """Refresh the stats bar at the top of the UI.
         
-        Reads the current entry count from the CSV and image count from
-        the images/ folder, then updates the stats label to display them.
+        Reads the current entry count from the CSV, image count from
+        the images/ folder, label/subcategory counts, and news category
+        counts, then updates both stats labels.
         Called after each save and at startup.
         """
-        total = get_entry_count()
+        counts = get_label_counts()
         img_count = get_image_count()
-        self.stats_label.configure(
-            text=f"Total entries: {total}  |  Images: {img_count}"
-        )
+        total = counts["total"]
+        fake = counts["fake"]
+        real = counts["real"]
+        sub = counts["fake_subcategories"]
+
+        # Line 1: Total, Images, Fake, Real + always show subcategory breakdown
+        stats_text = (f"Total: {total}  |  Images: {img_count}  |  "
+                      f"Fake: {fake}  |  Real: {real}  ||  "
+                      f"Misinformation: {sub['Misinformation']}  |  "
+                      f"Rumor: {sub['Rumor']}  |  Clickbait: {sub['Clickbait']}")
+        self.stats_label.configure(text=stats_text)
+
+        # Line 2: News category counts (only show categories that have data)
+        news_cats = counts["news_categories"]
+        if news_cats:
+            cat_parts = [f"{cat}: {count}" for cat, count in sorted(news_cats.items())]
+            cat_text = "News Categories  ▸  " + "  |  ".join(cat_parts)
+        else:
+            cat_text = "News Categories  ▸  No entries yet"
+        self.category_stats_label.configure(text=cat_text)
 
 
 # =============================================================================
