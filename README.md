@@ -32,12 +32,12 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
      
      *For Mac M1/M2/M3/M4 (Apple Silicon):*
      ```bash
-     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip -o FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
+     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip -o FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
      ```
      
      *For older Intel Macs:*
      ```bash
-     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-macOS-Intel.zip && unzip -o FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
+     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-Intel.zip && unzip -o FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
      ```
 
    - **Alternative manual fix:** If you already downloaded the `.zip` through Safari/Chrome and extracted it, open **Terminal** and type:
@@ -51,14 +51,14 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 4. **Windows users**: 
    - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to automatically create a `Fake News Dataset` folder on your Desktop and download it there:
      ```cmd
-     mkdir "%USERPROFILE%\Desktop\Fake News Dataset" 2>nul & cd "%USERPROFILE%\Desktop\Fake News Dataset" & curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Windows.exe
+     mkdir "%USERPROFILE%\Desktop\Fake News Dataset" 2>nul & cd "%USERPROFILE%\Desktop\Fake News Dataset" & curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Windows.exe
      ```
    - Go to the `Fake News Dataset` folder on your Desktop and double-click the `.exe` to launch the tool.
 
 5. **Linux users**:
    - Open your terminal and paste this command to create a `Fake News Dataset` folder on your Desktop, download it there, and make it executable:
      ```bash
-     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/download/v1.0.0/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux
+     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux
      ```
    - Go to the `Fake News Dataset` folder on your Desktop and double-click the file, or run `./FakeNewsAnnotator-Linux` to launch the tool.
 
@@ -125,6 +125,7 @@ YourFolder/
 | `source_category` | Platform where news was found (e.g., `Facebook`, `News Channel`) |
 | `category` | News topic category (e.g., `Politics`, `Health`) |
 | `annotator` | Name of the person who annotated this entry |
+| `annotation_confidence` | Confidence level of the annotation (0-100, default `100`) |
 | `timestamp` | ISO-format datetime when the entry was saved |
 
 ### Image Naming Convention

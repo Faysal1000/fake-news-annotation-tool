@@ -107,13 +107,14 @@ CONFIG_PATH = SCRIPT_DIR / ".annotator_config.json"
 # - source:     Where the news came from (optional)
 # - category:   Predefined topic category (optional)
 # - annotator:  Name of the person who annotated this entry
+# - annotation_confidence: Confidence level of the annotation (0-100, default 100)
 # - timestamp:  ISO-format datetime when the entry was saved
 # - heading:         Optional headline/title of the news item
 # - multi_category:  Sub-classification for fake news (Misinformation/Rumor/Clickbait)
 #                    or "Real" when the label is Real
 # - source_category: Platform/medium where the news was found (required)
 CSV_COLUMNS = ["id", "heading", "text", "image_path", "label", "multi_category",
-               "source", "source_category", "category", "annotator", "timestamp"]
+               "source", "source_category", "category", "annotator", "annotation_confidence", "timestamp"]
 
 # CATEGORIES: Predefined category options for the dropdown menu.
 # First entry is empty string (no category selected).
@@ -302,7 +303,7 @@ class AnnotatorTool(ctk.CTk):
         
         Creates a scrollable main frame and adds all input sections:
         annotator name, label selection, category dropdown, source field,
-        text area, image controls, action buttons, and a status bar.
+        text area, image controls, and action buttons.
         """
         # Scrollable container so the UI works on smaller screens
         main = ctk.CTkScrollableFrame(self, fg_color="transparent")
@@ -316,19 +317,20 @@ class AnnotatorTool(ctk.CTk):
         self.stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=13))
         self.stats_label.pack(pady=(0, 10))
 
-        # ----- ANNOTATOR NAME FIELD (required) -----
-        # Pre-filled from config file if the user has used the tool before.
-        self._section(main, "👤 Annotator Name *")
-        self.annotator_entry = ctk.CTkEntry(main, placeholder_text="Your name", height=36)
-        self.annotator_entry.pack(fill="x", padx=10, pady=(0, 8))
-        self.annotator_entry.insert(0, load_config())  # Load saved name from config
+        # ----- ANNOTATOR NAME FIELD -----
+        annotator_row = ctk.CTkFrame(main, fg_color="transparent")
+        annotator_row.pack(fill="x", padx=10, pady=(10, 8))
+
+        self._inline_label(annotator_row, "Annotator name *")
+        self.annotator_entry = ctk.CTkEntry(annotator_row, placeholder_text="Your name", height=36)
+        self.annotator_entry.pack(side="left", fill="x", expand=True)
 
         # ----- LABEL SELECTION (required) -----
         # Two radio buttons: "Fake" (red) and "Real" (green).
         # Exactly one must be selected before saving.
         # A trace is attached to label_var so that selecting a label
         # dynamically shows/hides the multi-category sub-classification.
-        self._section(main, "🏷️ Label *")
+        self._section(main, "News Label *")
         label_frame = ctk.CTkFrame(main, fg_color="transparent")
         label_frame.pack(fill="x", padx=10, pady=(0, 8))
         self.label_var = ctk.StringVar(value="")  # Empty = nothing selected yet
@@ -342,6 +344,13 @@ class AnnotatorTool(ctk.CTk):
                                               fg_color="#2ecc71", hover_color="#27ae60",
                                               command=self._on_label_change)
         self.radio_real.pack(side="left")
+        
+        self.confidence_entry = ctk.CTkEntry(label_frame, placeholder_text="100", width=80, height=36)
+        self.confidence_entry.pack(side="right")
+        self.confidence_entry.insert(0, "100")
+        
+        ctk.CTkLabel(label_frame, text="Annotation Confidence (0-100)",
+                     font=ctk.CTkFont(size=13)).pack(side="right", padx=(0, 10))
 
         # ----- MULTI-CATEGORY SUB-CLASSIFICATION -----
         # This section is only visible when the label is "Fake".
@@ -355,9 +364,14 @@ class AnnotatorTool(ctk.CTk):
         # Initially hidden — will be shown by _on_label_change when "Fake" is selected
         self.multi_cat_var = ctk.StringVar(value="")  # Empty = nothing selected yet
         # Header label inside the frame
-        ctk.CTkLabel(self.multi_cat_frame, text="⚠️ Fake News Type *",
+        multi_cat_header = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
+        multi_cat_header.pack(anchor="w", padx=12, pady=(8, 4))
+        ctk.CTkLabel(multi_cat_header, text="⚠️ Fake News Type",
                      font=ctk.CTkFont(size=13, weight="bold"),
-                     text_color="#f39c12").pack(anchor="w", padx=12, pady=(8, 4))
+                     text_color="#f39c12").pack(side="left", padx=(0, 2))
+        ctk.CTkLabel(multi_cat_header, text="*",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#e74c3c").pack(side="left")
         # Radio button row for the three sub-types
         multi_btn_frame = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
         multi_btn_frame.pack(fill="x", padx=12, pady=(0, 8))
@@ -382,35 +396,38 @@ class AnnotatorTool(ctk.CTk):
         # Placed side by side on the same row to save vertical space.
         # News Category: topic of the news (Politics, Health, etc.)
         # Source Category: platform/medium where the news was found
-        self._section(main, "📂 News Category & 📡 Source Category *")
         cat_row = ctk.CTkFrame(main, fg_color="transparent")
-        cat_row.pack(fill="x", padx=10, pady=(0, 8))
+        cat_row.pack(fill="x", padx=10, pady=(10, 8))
         # Left side: News Category dropdown
-        ctk.CTkLabel(cat_row, text="News Category:",
-                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        self._inline_label(cat_row, "News Category *")
         self.category_var = ctk.StringVar(value="")  # Empty = no category
         self.category_menu = ctk.CTkOptionMenu(cat_row, variable=self.category_var,
-                                                values=CATEGORIES, width=200, height=34)
-        self.category_menu.pack(side="left", padx=(0, 25))
+                                                values=CATEGORIES, height=36)
+        self.category_menu.pack(side="left", fill="x", expand=True)
+        
+        # Spacer
+        ctk.CTkFrame(cat_row, width=30, height=36, fg_color="transparent").pack(side="left")
+        
         # Right side: Source Category dropdown
-        ctk.CTkLabel(cat_row, text="Source Category:",
-                     font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 5))
+        self._inline_label(cat_row, "Source Category *")
         self.source_cat_var = ctk.StringVar(value="")  # Empty = nothing selected
         self.source_cat_menu = ctk.CTkOptionMenu(cat_row, variable=self.source_cat_var,
-                                                  values=SOURCE_CATEGORIES, width=200, height=34)
-        self.source_cat_menu.pack(side="left")
+                                                  values=SOURCE_CATEGORIES, height=36)
+        self.source_cat_menu.pack(side="left", fill="x", expand=True)
 
         # ----- SOURCE LINK FIELD (optional) -----
-        # Free-text field for the specific source link (URL, etc.)
-        self._section(main, "🔗 Source Link (optional)")
-        self.source_entry = ctk.CTkEntry(main, placeholder_text="Paste URL or link here", height=36)
-        self.source_entry.pack(fill="x", padx=10, pady=(0, 8))
+        source_row = ctk.CTkFrame(main, fg_color="transparent")
+        source_row.pack(fill="x", padx=10, pady=(10, 8))
 
-        # ----- HEADING FIELD (optional) -----
-        # A short headline or title for the news item. Stored in the
-        # 'heading' CSV column. Optional — the annotator can leave it blank.
-        self._section(main, "📌 Heading (optional)")
-        self.heading_entry = ctk.CTkEntry(main, placeholder_text="News headline / title", height=36)
+        self._inline_label(source_row, "Source Link")
+        self.source_entry = ctk.CTkEntry(source_row, placeholder_text="Paste URL or link here", height=36)
+        self.source_entry.pack(side="left", fill="x", expand=True)
+
+        # ----- NEWS HEADING FIELD (optional) -----
+        # Placed as a separate section with a label above and 2-line input box below.
+        self._section(main, "News Heading (optional)")
+        self.heading_entry = ctk.CTkTextbox(main, height=55, font=ctk.CTkFont(size=13),
+                                            border_width=1, border_color="#555")
         self.heading_entry.pack(fill="x", padx=10, pady=(0, 8))
 
         # ----- TEXT INPUT AREA -----
@@ -457,6 +474,8 @@ class AnnotatorTool(ctk.CTk):
                                         font=ctk.CTkFont(size=14), text_color="#888")
         self.drop_label.pack(expand=True, fill="both", pady=20)
 
+
+
         # ----- ACTION BUTTONS -----
         btn_frame = ctk.CTkFrame(main, fg_color="transparent")
         btn_frame.pack(fill="x", padx=10, pady=(10, 5))
@@ -470,23 +489,42 @@ class AnnotatorTool(ctk.CTk):
                        height=44, width=180, font=ctk.CTkFont(size=16, weight="bold"),
                        fg_color="#555", hover_color="#777").pack(side="left")
 
-        # ----- STATUS BAR -----
-        # Shows feedback messages: "Ready", "Entry saved", validation errors, etc.
-        self.status_label = ctk.CTkLabel(main, text="Ready", font=ctk.CTkFont(size=12),
-                                          text_color="#888")
-        self.status_label.pack(pady=(8, 5))
+        # ----- STATUS BAR (REMOVED) -----
+        class DummyLabel:
+            def configure(self, *args, **kwargs): pass
+        self.status_label = DummyLabel()
 
     def _section(self, parent, text):
         """Create a bold section heading label in the UI.
         
         Used to visually separate different input areas (Annotator, Label, etc.).
-        
-        Args:
-            parent: The parent widget to place the label in.
-            text: The heading text to display.
+        If the text ends with '*', it displays the '*' in red color.
         """
-        ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=14, weight="bold"),
-                     anchor="w").pack(fill="x", padx=10, pady=(10, 3))
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", padx=10, pady=(10, 3))
+        
+        if text.endswith("*"):
+            main_text = text[:-1].rstrip()
+            lbl = ctk.CTkLabel(frame, text=main_text, font=ctk.CTkFont(size=15, weight="bold"))
+            lbl.pack(side="left")
+            ast = ctk.CTkLabel(frame, text=" *", font=ctk.CTkFont(size=15, weight="bold"), text_color="#e74c3c")
+            ast.pack(side="left")
+        else:
+            lbl = ctk.CTkLabel(frame, text=text, font=ctk.CTkFont(size=15, weight="bold"))
+            lbl.pack(side="left")
+
+    def _inline_label(self, parent, text, width=140):
+        """Create a fixed-width frame for inline labels to ensure vertical alignment of inputs."""
+        frame = ctk.CTkFrame(parent, width=width, height=36, fg_color="transparent")
+        frame.pack_propagate(False)
+        frame.pack(side="left", padx=(0, 10))
+        
+        if text.endswith("*"):
+            main_text = text[:-1].rstrip()
+            ctk.CTkLabel(frame, text=main_text, font=ctk.CTkFont(size=13)).pack(side="left")
+            ctk.CTkLabel(frame, text=" *", font=ctk.CTkFont(size=13, weight="bold"), text_color="#e74c3c").pack(side="left")
+        else:
+            ctk.CTkLabel(frame, text=text, font=ctk.CTkFont(size=13)).pack(side="left")
 
     # =========================================================================
     # LABEL CHANGE HANDLER
@@ -761,12 +799,13 @@ class AnnotatorTool(ctk.CTk):
         # --- Step 1: Read all current field values ---
         annotator = self.annotator_entry.get().strip()
         label = self.label_var.get()
-        heading = self.heading_entry.get().strip()  # Optional headline
+        heading = self.heading_entry.get("1.0", "end-1c").strip()  # Optional headline
         text = self.text_box.get("1.0", "end-1c").strip()  # Get text without trailing newline
         source = self.source_entry.get().strip()
         source_category = self.source_cat_var.get()  # Required platform/medium
         category = self.category_var.get()
         multi_cat = self.multi_cat_var.get()  # Sub-classification for fake news
+        confidence_str = self.confidence_entry.get().strip()
         has_image = len(self.image_list) > 0
 
         # --- Step 2: Validate required fields ---
@@ -785,6 +824,19 @@ class AnnotatorTool(ctk.CTk):
             errors.append("Source Category is required.")
         if not text and not has_image:
             errors.append("At least one of Text or Image must be provided.")
+
+        # Validate confidence value
+        confidence = 100
+        if not confidence_str:
+            confidence = 100
+        else:
+            try:
+                confidence = int(confidence_str)
+                if not (0 <= confidence <= 100):
+                    errors.append("Annotation Confidence must be an integer between 0 and 100.")
+            except ValueError:
+                errors.append("Annotation Confidence must be a valid integer between 0 and 100.")
+
         if errors:
             messagebox.showerror("Validation Error", "\n".join(errors))
             return
@@ -873,6 +925,7 @@ class AnnotatorTool(ctk.CTk):
                 "source_category": source_category,
                 "category": category,
                 "annotator": annotator,
+                "annotation_confidence": confidence,
                 "timestamp": datetime.now().isoformat(),
             })
 
@@ -902,7 +955,7 @@ class AnnotatorTool(ctk.CTk):
         category, multi-category, and all attached images.
         """
         self.text_box.delete("1.0", "end")       # Clear the text area
-        self.heading_entry.delete(0, "end")        # Clear the heading field
+        self.heading_entry.delete("1.0", "end")       # Clear the heading field
         self.source_entry.delete(0, "end")         # Clear the source field
         self.label_var.set("")                      # Deselect the label radio buttons
         self.category_var.set("")                   # Reset category dropdown
@@ -910,6 +963,8 @@ class AnnotatorTool(ctk.CTk):
         self.multi_cat_var.set("")                   # Reset multi-category selection
         self.multi_cat_frame.pack_forget()           # Hide multi-category panel
         self._remove_all_images()                   # Clear all attached images
+        self.confidence_entry.delete(0, "end")      # Clear confidence field
+        self.confidence_entry.insert(0, "100")      # Reset default value to 100
 
     def _clear_all(self):
         """Clear all fields except the annotator name.
