@@ -321,6 +321,16 @@ class AnnotatorTool(ctk.CTk):
         # otherwise they get garbage collected and disappear from the UI.
         self.preview_photos = []
 
+        # REVIEW MODE STATE:
+        # Tracks which mode the app is in ('annotate' or 'review')
+        self.current_mode = "annotate"
+        # Holds all CSV rows loaded into memory for browsing in review mode
+        self.dataset_records = []
+        # Index of the currently displayed record in review mode
+        self.current_review_index = 0
+        # Temporarily stores the user's in-progress annotation when switching modes
+        self.draft_annotation = None
+
         # Build all UI elements, set up drag-and-drop, and refresh stats
         self._build_ui()
         self._setup_dnd()
@@ -330,8 +340,10 @@ class AnnotatorTool(ctk.CTk):
         # Whenever the user types in or tabs away from the annotator field,
         # immediately persist the name to the config file. This way the
         # name is remembered even if the user closes the tool without saving.
-        self.annotator_entry.bind("<KeyRelease>", lambda e: save_config(self.annotator_entry.get().strip()))
-        self.annotator_entry.bind("<FocusOut>", lambda e: save_config(self.annotator_entry.get().strip()))
+        self.annotator_entry.bind("<KeyRelease>",
+            lambda e: save_config(self.annotator_entry.get().strip()) if self.current_mode == "annotate" else None)
+        self.annotator_entry.bind("<FocusOut>",
+            lambda e: save_config(self.annotator_entry.get().strip()) if self.current_mode == "annotate" else None)
 
     # =========================================================================
     # UI CONSTRUCTION
@@ -348,9 +360,22 @@ class AnnotatorTool(ctk.CTk):
         main = ctk.CTkScrollableFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=18, pady=10)
 
-        # ----- Application title at the top of the window -----
-        ctk.CTkLabel(main, text="📰 Fake News Dataset Annotator",
-                     font=ctk.CTkFont(size=26, weight="bold")).pack(pady=(5, 2))
+        # ----- TOP BAR: Mode switcher (left) + Title (center) -----
+        top_bar = ctk.CTkFrame(main, fg_color="transparent")
+        top_bar.pack(fill="x", pady=(5, 2))
+
+        self.mode_switcher = ctk.CTkSegmentedButton(
+            top_bar, values=["📝 Annotate", "🔍 Review"],
+            command=self._toggle_mode,
+            font=ctk.CTkFont(size=10),
+            selected_color="#1f6aa5", selected_hover_color="#144870",
+            height=24, width=150
+        )
+        self.mode_switcher.set("📝 Annotate")
+        self.mode_switcher.pack(side="left", padx=(0, 10))
+
+        ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
+                     font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
 
         # ----- Stats bar: shows total entry count, image count, and label counts -----
         self.stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=13))
@@ -361,12 +386,37 @@ class AnnotatorTool(ctk.CTk):
                                                   text_color="#aaa")
         self.category_stats_label.pack(pady=(0, 10))
 
+        # ----- REVIEW NAVIGATION BAR (hidden by default, shown in Review mode) -----
+        self.nav_frame = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=6,
+                                       border_width=1, border_color="#444")
+        self.prev_btn = ctk.CTkButton(self.nav_frame, text="◀ Prev",
+                                       command=self._prev_record, width=80, height=28,
+                                       font=ctk.CTkFont(size=12))
+        self.prev_btn.pack(side="left", padx=8, pady=5)
+        
+        # Center frame for editable record index
+        self.record_center_frame = ctk.CTkFrame(self.nav_frame, fg_color="transparent")
+        self.record_center_frame.pack(side="left", expand=True)
+        
+        ctk.CTkLabel(self.record_center_frame, text="Record", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 5))
+        
+        self.record_index_entry = ctk.CTkEntry(self.record_center_frame, width=50, height=24, font=ctk.CTkFont(size=13, weight="bold"), justify="center")
+        self.record_index_entry.pack(side="left")
+        self.record_index_entry.bind("<Return>", self._jump_to_record)
+        
+        self.record_total_label = ctk.CTkLabel(self.record_center_frame, text="of 0", font=ctk.CTkFont(size=13))
+        self.record_total_label.pack(side="left", padx=(5, 0))
+        self.next_btn = ctk.CTkButton(self.nav_frame, text="Next ▶",
+                                       command=self._next_record, width=80, height=28,
+                                       font=ctk.CTkFont(size=12))
+        self.next_btn.pack(side="right", padx=8, pady=5)
+
         # ----- ANNOTATOR NAME FIELD -----
         annotator_row = ctk.CTkFrame(main, fg_color="transparent")
         annotator_row.pack(fill="x", padx=10, pady=(10, 8))
 
         self._inline_label(annotator_row, "Annotator name *")
-        self.annotator_entry = ctk.CTkEntry(annotator_row, placeholder_text="Your name", height=36)
+        self.annotator_entry = ctk.CTkEntry(annotator_row, placeholder_text="Your name", height=28)
         self.annotator_entry.pack(side="left", fill="x", expand=True)
 
         # ----- LABEL SELECTION (required) -----
@@ -374,9 +424,9 @@ class AnnotatorTool(ctk.CTk):
         # Exactly one must be selected before saving.
         # A trace is attached to label_var so that selecting a label
         # dynamically shows/hides the multi-category sub-classification.
-        self._section(main, "News Label *")
         label_frame = ctk.CTkFrame(main, fg_color="transparent")
-        label_frame.pack(fill="x", padx=10, pady=(0, 8))
+        label_frame.pack(fill="x", padx=10, pady=(10, 8))
+        self._inline_label(label_frame, "News Label *")
         self.label_var = ctk.StringVar(value="")  # Empty = nothing selected yet
         self.radio_fake = ctk.CTkRadioButton(label_frame, text="Fake", variable=self.label_var,
                                               value="Fake", font=ctk.CTkFont(size=14),
@@ -389,11 +439,11 @@ class AnnotatorTool(ctk.CTk):
                                               command=self._on_label_change)
         self.radio_real.pack(side="left")
         
-        self.confidence_entry = ctk.CTkEntry(label_frame, placeholder_text="100", width=80, height=36)
+        self.confidence_entry = ctk.CTkEntry(label_frame, placeholder_text="100", width=80, height=28)
         self.confidence_entry.pack(side="right")
         self.confidence_entry.insert(0, "100")
         
-        ctk.CTkLabel(label_frame, text="Annotation Confidence (0-100)",
+        ctk.CTkLabel(label_frame, text="Confidence %",
                      font=ctk.CTkFont(size=13)).pack(side="right", padx=(0, 10))
 
         # ----- MULTI-CATEGORY SUB-CLASSIFICATION -----
@@ -407,34 +457,36 @@ class AnnotatorTool(ctk.CTk):
                                              border_color="#444")
         # Initially hidden — will be shown by _on_label_change when "Fake" is selected
         self.multi_cat_var = ctk.StringVar(value="")  # Empty = nothing selected yet
-        # Header label inside the frame
-        multi_cat_header = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
-        multi_cat_header.pack(anchor="w", padx=12, pady=(8, 4))
-        ctk.CTkLabel(multi_cat_header, text="⚠️ Fake News Type",
+        # Ensure it aligns perfectly with the other inline labels by fixing the label width
+        header_frame = ctk.CTkFrame(self.multi_cat_frame, width=140, height=28, fg_color="transparent")
+        header_frame.pack_propagate(False) # Force width to 140
+        header_frame.pack(side="left", padx=(10, 10), pady=(10, 10))
+        
+        ctk.CTkLabel(header_frame, text="⚠️ Fake News Type",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#f39c12").pack(side="left", padx=(0, 2))
-        ctk.CTkLabel(multi_cat_header, text="*",
+        ctk.CTkLabel(header_frame, text="*",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#e74c3c").pack(side="left")
-        # Radio button row for the three sub-types
-        multi_btn_frame = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
-        multi_btn_frame.pack(fill="x", padx=12, pady=(0, 8))
+
         # Each sub-type has its own colour to aid quick visual identification
         self.radio_misinfo = ctk.CTkRadioButton(
-            multi_btn_frame, text="Misinformation", variable=self.multi_cat_var,
+            self.multi_cat_frame, text="Misinformation", variable=self.multi_cat_var,
             value="Misinformation", font=ctk.CTkFont(size=13),
             fg_color="#e67e22", hover_color="#d35400")
-        self.radio_misinfo.pack(side="left", padx=(0, 20))
+        self.radio_misinfo.pack(side="left", padx=(0, 20), pady=(10, 10))
+        
         self.radio_rumor = ctk.CTkRadioButton(
-            multi_btn_frame, text="Rumor", variable=self.multi_cat_var,
+            self.multi_cat_frame, text="Rumor", variable=self.multi_cat_var,
             value="Rumor", font=ctk.CTkFont(size=13),
             fg_color="#9b59b6", hover_color="#8e44ad")
-        self.radio_rumor.pack(side="left", padx=(0, 20))
+        self.radio_rumor.pack(side="left", padx=(0, 20), pady=(10, 10))
+        
         self.radio_clickbait = ctk.CTkRadioButton(
-            multi_btn_frame, text="Clickbait", variable=self.multi_cat_var,
+            self.multi_cat_frame, text="Clickbait", variable=self.multi_cat_var,
             value="Clickbait", font=ctk.CTkFont(size=13),
             fg_color="#e74c3c", hover_color="#c0392b")
-        self.radio_clickbait.pack(side="left")
+        self.radio_clickbait.pack(side="left", pady=(10, 10))
 
         # ----- NEWS CATEGORY & SOURCE CATEGORY (both required) -----
         # Placed side by side on the same row to save vertical space.
@@ -446,17 +498,17 @@ class AnnotatorTool(ctk.CTk):
         self._inline_label(cat_row, "News Category *")
         self.category_var = ctk.StringVar(value="")  # Empty = no category
         self.category_menu = ctk.CTkOptionMenu(cat_row, variable=self.category_var,
-                                                values=CATEGORIES, height=36)
+                                                values=CATEGORIES, height=28)
         self.category_menu.pack(side="left", fill="x", expand=True)
         
         # Spacer
-        ctk.CTkFrame(cat_row, width=30, height=36, fg_color="transparent").pack(side="left")
+        ctk.CTkFrame(cat_row, width=30, height=28, fg_color="transparent").pack(side="left")
         
         # Right side: Source Category dropdown
         self._inline_label(cat_row, "Source Category *")
         self.source_cat_var = ctk.StringVar(value="")  # Empty = nothing selected
         self.source_cat_menu = ctk.CTkOptionMenu(cat_row, variable=self.source_cat_var,
-                                                  values=SOURCE_CATEGORIES, height=36)
+                                                  values=SOURCE_CATEGORIES, height=28)
         self.source_cat_menu.pack(side="left", fill="x", expand=True)
 
         # ----- SOURCE LINK FIELD (optional) -----
@@ -464,7 +516,7 @@ class AnnotatorTool(ctk.CTk):
         source_row.pack(fill="x", padx=10, pady=(10, 8))
 
         self._inline_label(source_row, "Source Link")
-        self.source_entry = ctk.CTkEntry(source_row, placeholder_text="Paste URL or link here", height=36)
+        self.source_entry = ctk.CTkEntry(source_row, placeholder_text="Paste URL or link here", height=28)
         self.source_entry.pack(side="left", fill="x", expand=True)
 
         # ----- NEWS HEADING FIELD (optional) -----
@@ -494,13 +546,13 @@ class AnnotatorTool(ctk.CTk):
 
         # Browse button - opens native file picker filtered to image types only
         ctk.CTkButton(img_btn_frame, text="📁 Browse Images", command=self._browse_image,
-                       width=160, height=36).pack(side="left", padx=(0, 10))
+                       width=130, height=28).pack(side="left", padx=(0, 10))
         # Paste button - grabs image from clipboard (screenshot, copied image, etc.)
         ctk.CTkButton(img_btn_frame, text="📋 Paste from Clipboard", command=self._paste_image,
-                       width=200, height=36).pack(side="left", padx=(0, 10))
+                       width=160, height=28).pack(side="left", padx=(0, 10))
         # Remove all button - clears all attached images at once
         ctk.CTkButton(img_btn_frame, text="❌ Remove All Images", command=self._remove_all_images,
-                       width=170, height=36, fg_color="#e74c3c",
+                       width=140, height=28, fg_color="#e74c3c",
                        hover_color="#c0392b").pack(side="left")
 
         # ----- DRAG AND DROP ZONE / IMAGE PREVIEW AREA -----
@@ -520,18 +572,27 @@ class AnnotatorTool(ctk.CTk):
 
 
 
-        # ----- ACTION BUTTONS -----
-        btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        btn_frame.pack(fill="x", padx=10, pady=(10, 5))
-        # Save button - validates input, saves image(s), appends CSV row
-        ctk.CTkButton(btn_frame, text="💾  Save Entry", command=self._save_entry,
+        # ----- ACTION BUTTONS (Annotate Mode) -----
+        self.annotate_btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
+        ctk.CTkButton(self.annotate_btn_frame, text="💾  Save Entry", command=self._save_entry,
                        height=44, font=ctk.CTkFont(size=16, weight="bold"),
                        fg_color="#2ecc71", hover_color="#27ae60",
                        text_color="black").pack(side="left", expand=True, fill="x", padx=(0, 10))
-        # Clear button - resets all fields EXCEPT annotator name
-        ctk.CTkButton(btn_frame, text="🗑️  Clear All", command=self._clear_all,
+        ctk.CTkButton(self.annotate_btn_frame, text="🗑️  Clear All", command=self._clear_all,
                        height=44, width=180, font=ctk.CTkFont(size=16, weight="bold"),
                        fg_color="#555", hover_color="#777").pack(side="left")
+
+        # ----- ACTION BUTTONS (Review Mode, hidden by default) -----
+        self.review_btn_frame = ctk.CTkFrame(main, fg_color="transparent")
+        # Not packed yet — shown only when the user switches to Review mode
+        ctk.CTkButton(self.review_btn_frame, text="💾  Update Entry", command=self._update_entry,
+                       height=44, font=ctk.CTkFont(size=16, weight="bold"),
+                       fg_color="#3498db", hover_color="#2980b9",
+                       text_color="white").pack(side="left", expand=True, fill="x", padx=(0, 10))
+        ctk.CTkButton(self.review_btn_frame, text="🗑️  Delete Entry", command=self._delete_entry,
+                       height=44, width=180, font=ctk.CTkFont(size=16, weight="bold"),
+                       fg_color="#e74c3c", hover_color="#c0392b").pack(side="left")
 
         # ----- STATUS BAR (REMOVED) -----
         class DummyLabel:
@@ -767,7 +828,11 @@ class AnnotatorTool(ctk.CTk):
         grid_frame = ctk.CTkFrame(self.drop_frame, fg_color="transparent")
         grid_frame.pack(fill="x", padx=8, pady=(0, 8))
 
-        # Create a thumbnail card for each image in a grid (4 columns)
+        # Use small thumbnails (5 columns) for all modes, since clicking them opens the large popup
+        thumb_size = (100, 80)
+        cols = 5
+
+        # Create a thumbnail card for each image in a grid
         for i, (path, pil_img) in enumerate(self.image_list):
             try:
                 # Open or copy the image and create a thumbnail
@@ -775,23 +840,29 @@ class AnnotatorTool(ctk.CTk):
                     img = Image.open(path)
                 else:
                     img = pil_img.copy()
-                img.thumbnail((130, 100))  # Resize to fit inside the box
+                img.thumbnail(thumb_size)
                 photo = ImageTk.PhotoImage(img)
                 self.preview_photos.append(photo)  # Keep reference alive
 
                 # Create a card frame for this thumbnail
                 frame = ctk.CTkFrame(grid_frame, fg_color="#222240",
                                       corner_radius=6)
-                frame.grid(row=i // 4, column=i % 4, padx=4, pady=4)
+                frame.grid(row=i // cols, column=i % cols, padx=4, pady=4)
 
-                # Display the thumbnail image
-                lbl = ctk.CTkLabel(frame, image=photo, text="")
+                # Display the thumbnail image (click to enlarge)
+                lbl = ctk.CTkLabel(frame, image=photo, text="", cursor="hand2")
                 lbl.pack(padx=4, pady=(4, 0))
+                lbl.bind("<Button-1>", lambda e, idx=i: self._show_image_popup(idx))
 
                 # Show the filename (truncated to 18 chars)
                 name = path.name if path else f"clipboard_{i+1}.png"
                 ctk.CTkLabel(frame, text=name[:18], font=ctk.CTkFont(size=9),
                              text_color="#aaa").pack(pady=(0, 1))
+
+                # Hint to click for full view (only in review mode)
+                if self.current_mode == "review":
+                    ctk.CTkLabel(frame, text="🔍 Click to enlarge",
+                                 font=ctk.CTkFont(size=9), text_color="#666").pack(pady=(0, 1))
 
                 # Small remove button for this specific image
                 # Uses lambda with default arg to capture the current index
@@ -803,6 +874,56 @@ class AnnotatorTool(ctk.CTk):
             except Exception:
                 # Skip images that fail to load (corrupt files, etc.)
                 pass
+
+    def _show_image_popup(self, index):
+        """Open a popup window to view the selected image at full size.
+
+        Creates a Toplevel window that displays the image scaled to fit
+        the screen while maintaining its aspect ratio.
+
+        Args:
+            index: Zero-based index of the image to display.
+        """
+        if index < 0 or index >= len(self.image_list):
+            return
+
+        path, pil_img = self.image_list[index]
+        try:
+            if path:
+                img = Image.open(path)
+            else:
+                img = pil_img.copy()
+        except Exception:
+            return
+
+        # Create a dark popup window
+        popup = ctk.CTkToplevel(self)
+        popup.title("Image Viewer")
+        popup.configure(fg_color="#111")
+        popup.attributes("-topmost", True)
+
+        # Scale image to fit within 80% of screen dimensions
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        max_w = int(screen_w * 0.8)
+        max_h = int(screen_h * 0.8)
+        img.thumbnail((max_w, max_h), Image.LANCZOS)
+
+        popup.geometry(f"{img.width + 40}x{img.height + 80}")
+
+        photo = ImageTk.PhotoImage(img)
+        # Must keep a reference so the image isn't garbage collected
+        popup._photo_ref = photo
+
+        lbl = ctk.CTkLabel(popup, image=photo, text="")
+        lbl.pack(expand=True, fill="both", padx=10, pady=(10, 5))
+
+        name = path.name if path else f"clipboard_{index+1}.png"
+        ctk.CTkLabel(popup, text=name, font=ctk.CTkFont(size=12),
+                     text_color="#aaa").pack(pady=(0, 5))
+
+        ctk.CTkButton(popup, text="Close", width=100, height=30,
+                      command=popup.destroy).pack(pady=(0, 10))
 
     def _remove_image(self, index):
         """Remove a single image from the image list by its index.
@@ -1050,6 +1171,418 @@ class AnnotatorTool(ctk.CTk):
         else:
             cat_text = "News Categories  ▸  No entries yet"
         self.category_stats_label.configure(text=cat_text)
+
+
+    # =========================================================================
+    # REVIEW MODE
+    # =========================================================================
+
+    def _toggle_mode(self, mode_name):
+        """Switch between Annotate and Review modes.
+
+        When switching to Review: saves the current annotation as a draft,
+        loads the CSV, and displays the first record.
+        When switching to Annotate: restores the saved draft.
+        """
+        if "Annotate" in mode_name:
+            if self.current_mode == "annotate":
+                return
+            self.current_mode = "annotate"
+            self.nav_frame.pack_forget()
+            self.review_btn_frame.pack_forget()
+            self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
+            self._restore_draft()
+        elif "Review" in mode_name:
+            if self.current_mode == "review":
+                return
+            self._save_draft()
+            self.current_mode = "review"
+            self._load_dataset()
+            if not self.dataset_records:
+                messagebox.showinfo("No Data",
+                    "No entries found in dataset.csv.\nAnnotate some entries first!")
+                self.mode_switcher.set("📝 Annotate")
+                self.current_mode = "annotate"
+                self._restore_draft()
+                return
+            self.annotate_btn_frame.pack_forget()
+            self.review_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
+            self.nav_frame.pack(fill="x", padx=10, pady=(5, 15),
+                                after=self.review_btn_frame)
+            self.current_review_index = 0
+            self._display_record(self.current_review_index)
+
+    def _load_dataset(self):
+        """Load all records from the dataset CSV into memory for review."""
+        self.dataset_records = []
+        if not CSV_PATH.exists():
+            return
+        with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                self.dataset_records.append(row)
+
+    def _display_record(self, index):
+        """Populate all UI fields with data from the record at the given index.
+
+        Loads text fields, dropdowns, label selection, confidence, and
+        any images referenced in the record's image_path column.
+        """
+        if not self.dataset_records or index < 0 or index >= len(self.dataset_records):
+            return
+
+        record = self.dataset_records[index]
+
+        # Update the navigation counter and button states
+        total = len(self.dataset_records)
+        self.record_index_entry.delete(0, "end")
+        self.record_index_entry.insert(0, str(index + 1))
+        self.record_total_label.configure(text=f"of {total}")
+        self.prev_btn.configure(state="normal" if index > 0 else "disabled")
+        self.next_btn.configure(state="normal" if index < total - 1 else "disabled")
+
+        # Clear all fields before populating
+        self._clear_fields()
+
+        # Populate each field from the record
+        self.annotator_entry.delete(0, "end")
+        self.annotator_entry.insert(0, record.get("annotator", ""))
+
+        label = record.get("label", "")
+        if label:
+            self.label_var.set(label)
+            self._on_label_change()
+
+        multi_cat = record.get("multi_category", "")
+        if label == "Fake" and multi_cat in MULTI_CATEGORIES:
+            self.multi_cat_var.set(multi_cat)
+
+        self.category_var.set(record.get("category", ""))
+        self.source_cat_var.set(record.get("source_category", ""))
+
+        self.source_entry.delete(0, "end")
+        self.source_entry.insert(0, record.get("source", ""))
+
+        self.heading_entry.delete("1.0", "end")
+        heading = record.get("heading", "")
+        if heading:
+            self.heading_entry.insert("1.0", heading)
+
+        self.text_box.delete("1.0", "end")
+        text = record.get("text", "")
+        if text:
+            self.text_box.insert("1.0", text)
+
+        self.confidence_entry.delete(0, "end")
+        self.confidence_entry.insert(0, record.get("annotation_confidence", "100"))
+
+        # Load images referenced in the record
+        self.image_list.clear()
+        image_paths = record.get("image_path", "")
+        if image_paths:
+            for rel_path in image_paths.split(";"):
+                rel_path = rel_path.strip()
+                if rel_path:
+                    full_path = SCRIPT_DIR / rel_path
+                    if full_path.exists():
+                        self.image_list.append((full_path, None))
+        self._refresh_previews()
+
+    def _check_unsaved_changes(self):
+        """Check if current review record has unsaved edits before navigating.
+        
+        Returns:
+            True if safe to navigate (no changes, or user chose to discard/save).
+            False if navigation should be aborted (Cancel or save failed).
+        """
+        if not self.dataset_records or self.current_review_index < 0:
+            return True
+            
+        record = self.dataset_records[self.current_review_index]
+        
+        annotator = self.annotator_entry.get().strip()
+        label = self.label_var.get()
+        heading = self.heading_entry.get("1.0", "end-1c").strip()
+        text = self.text_box.get("1.0", "end-1c").strip()
+        source = self.source_entry.get().strip()
+        source_category = self.source_cat_var.get()
+        category = self.category_var.get()
+        multi_cat = self.multi_cat_var.get() if label == "Fake" else ("Real" if label == "Real" else "")
+        confidence = self.confidence_entry.get().strip()
+        
+        changed = False
+        if annotator != record.get("annotator", ""): changed = True
+        elif label != record.get("label", ""): changed = True
+        elif heading != record.get("heading", ""): changed = True
+        elif text != record.get("text", ""): changed = True
+        elif source != record.get("source", ""): changed = True
+        elif source_category != record.get("source_category", ""): changed = True
+        elif category != record.get("category", ""): changed = True
+        elif multi_cat != record.get("multi_category", ""): changed = True
+        elif confidence != record.get("annotation_confidence", "100"): changed = True
+        
+        if not changed:
+            orig_images = [p for p in record.get("image_path", "").split(";") if p.strip()]
+            if len(self.image_list) != len(orig_images):
+                changed = True
+                
+        if not changed:
+            return True
+            
+        response = messagebox.askyesnocancel(
+            "Unsaved Changes",
+            "You have unsaved changes in this record.\n\n"
+            "Do you want to save them before moving?"
+        )
+        
+        if response is True:  # Yes
+            return self._update_entry(show_success=False)
+        elif response is False:  # No
+            return True
+        else:  # Cancel
+            return False
+
+    def _next_record(self):
+        """Navigate to the next record in the dataset."""
+        if self.current_review_index < len(self.dataset_records) - 1:
+            if not self._check_unsaved_changes():
+                return
+            self.current_review_index += 1
+            self._display_record(self.current_review_index)
+
+    def _prev_record(self):
+        """Navigate to the previous record in the dataset."""
+        if self.current_review_index > 0:
+            if not self._check_unsaved_changes():
+                return
+            self.current_review_index -= 1
+            self._display_record(self.current_review_index)
+
+    def _jump_to_record(self, event=None):
+        """Jump to the record index typed in the entry field."""
+        try:
+            val = int(self.record_index_entry.get().strip())
+            # Convert to 0-based index
+            idx = val - 1
+            if 0 <= idx < len(self.dataset_records):
+                if self.current_review_index != idx:
+                    if not self._check_unsaved_changes():
+                        # Reset to current valid index
+                        self.record_index_entry.delete(0, "end")
+                        self.record_index_entry.insert(0, str(self.current_review_index + 1))
+                        self.focus_set()
+                        return
+                    self.current_review_index = idx
+                    self._display_record(self.current_review_index)
+                # Unfocus the entry widget so we don't accidentally keep typing
+                self.focus_set()
+            else:
+                # Reset to current valid index
+                self.record_index_entry.delete(0, "end")
+                self.record_index_entry.insert(0, str(self.current_review_index + 1))
+                messagebox.showwarning("Invalid Record", f"Please enter a number between 1 and {len(self.dataset_records)}.")
+        except ValueError:
+            # Reset if not a valid number
+            self.record_index_entry.delete(0, "end")
+            self.record_index_entry.insert(0, str(self.current_review_index + 1))
+
+    def _update_entry(self, show_success=True):
+        """Validate fields and save changes to the currently displayed record.
+
+        Re-validates all required fields, processes any new images,
+        updates the in-memory record, and rewrites the CSV file.
+        """
+        if not self.dataset_records:
+            return False
+
+        annotator = self.annotator_entry.get().strip()
+        label = self.label_var.get()
+        heading = self.heading_entry.get("1.0", "end-1c").strip()
+        text = self.text_box.get("1.0", "end-1c").strip()
+        source = self.source_entry.get().strip()
+        source_category = self.source_cat_var.get()
+        category = self.category_var.get()
+        multi_cat = self.multi_cat_var.get()
+        confidence_str = self.confidence_entry.get().strip()
+        has_image = len(self.image_list) > 0
+
+        # Validate required fields
+        errors = []
+        if not annotator:
+            errors.append("Annotator name is required.")
+        if not label:
+            errors.append("Label (Fake/Real) must be selected.")
+        if label == "Fake" and not multi_cat:
+            errors.append("Fake News Type must be selected.")
+        if not category:
+            errors.append("News Category is required.")
+        if not source_category:
+            errors.append("Source Category is required.")
+        if not text and not has_image:
+            errors.append("At least one of Text or Image must be provided.")
+
+        confidence = 100
+        if confidence_str:
+            try:
+                confidence = int(confidence_str)
+                if not (0 <= confidence <= 100):
+                    errors.append("Annotation Confidence must be between 0 and 100.")
+            except ValueError:
+                errors.append("Annotation Confidence must be a valid integer.")
+
+        if errors:
+            messagebox.showerror("Validation Error", "\n".join(errors))
+            return False
+
+        if label == "Real":
+            multi_cat = "Real"
+
+        record = self.dataset_records[self.current_review_index]
+        entry_id = record.get("id", generate_id())
+        sanitized_annotator = sanitize_name(annotator)
+
+        # Process images: keep existing project images, copy new external ones
+        image_rel_paths = []
+        for path, pil_img in self.image_list:
+            if path:
+                try:
+                    rel = path.relative_to(SCRIPT_DIR)
+                    image_rel_paths.append(str(rel).replace("\\", "/"))
+                except ValueError:
+                    img_count = get_image_count() + 1
+                    ext = path.suffix.lower()
+                    img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                    img_dest = IMAGES_DIR / img_filename
+                    shutil.copy2(path, img_dest)
+                    image_rel_paths.append(f"images/{img_filename}")
+            else:
+                img_count = get_image_count() + 1
+                img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}.png"
+                img_dest = IMAGES_DIR / img_filename
+                src_img = pil_img
+                if src_img.mode == "RGBA":
+                    src_img = src_img.convert("RGB")
+                src_img.save(img_dest)
+                image_rel_paths.append(f"images/{img_filename}")
+
+        # Update the in-memory record
+        record["annotator"] = annotator
+        record["label"] = label
+        record["heading"] = heading
+        record["text"] = text
+        record["source"] = source
+        record["source_category"] = source_category
+        record["category"] = category
+        record["multi_category"] = multi_cat
+        record["annotation_confidence"] = str(confidence)
+        record["image_path"] = ";".join(image_rel_paths)
+
+        self._rewrite_csv()
+        self._update_stats()
+        if show_success:
+            messagebox.showinfo("Update Complete",
+                f"Record {self.current_review_index + 1} updated successfully!")
+        return True
+
+    def _delete_entry(self):
+        """Delete the currently displayed record after user confirmation.
+
+        Removes the record from memory, rewrites the CSV, and adjusts
+        the review index. If no records remain, switches back to Annotate mode.
+        """
+        if not self.dataset_records:
+            return
+
+        confirm = messagebox.askyesno("Confirm Delete",
+            f"Are you sure you want to delete Record {self.current_review_index + 1}?\n\n"
+            "This action cannot be undone.")
+        if not confirm:
+            return
+
+        self.dataset_records.pop(self.current_review_index)
+        self._rewrite_csv()
+        self._update_stats()
+
+        if not self.dataset_records:
+            messagebox.showinfo("No Records", "All records have been deleted.")
+            self.mode_switcher.set("📝 Annotate")
+            self._toggle_mode("📝 Annotate")
+            return
+
+        if self.current_review_index >= len(self.dataset_records):
+            self.current_review_index = len(self.dataset_records) - 1
+        self._display_record(self.current_review_index)
+
+    def _rewrite_csv(self):
+        """Rewrite the entire CSV file from the in-memory records list."""
+        with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer.writeheader()
+            for record in self.dataset_records:
+                writer.writerow(record)
+
+    def _save_draft(self):
+        """Save the current annotation field values as a draft.
+
+        Called when switching from Annotate to Review mode so the user's
+        in-progress work is not lost.
+        """
+        self.draft_annotation = {
+            "annotator": self.annotator_entry.get().strip(),
+            "label": self.label_var.get(),
+            "multi_cat": self.multi_cat_var.get(),
+            "category": self.category_var.get(),
+            "source_category": self.source_cat_var.get(),
+            "source": self.source_entry.get().strip(),
+            "heading": self.heading_entry.get("1.0", "end-1c").strip(),
+            "text": self.text_box.get("1.0", "end-1c").strip(),
+            "confidence": self.confidence_entry.get().strip(),
+            "images": list(self.image_list),
+        }
+
+    def _restore_draft(self):
+        """Restore previously saved annotation field values.
+
+        Called when switching from Review back to Annotate mode.
+        If no draft was saved, clears all fields instead.
+        """
+        if self.draft_annotation is None:
+            self._clear_fields()
+            return
+
+        draft = self.draft_annotation
+        self.draft_annotation = None
+
+        self._clear_fields()
+        self.annotator_entry.delete(0, "end")
+        self.annotator_entry.insert(0, draft["annotator"])
+
+        if draft["label"]:
+            self.label_var.set(draft["label"])
+            self._on_label_change()
+
+        if draft["multi_cat"]:
+            self.multi_cat_var.set(draft["multi_cat"])
+
+        self.category_var.set(draft["category"])
+        self.source_cat_var.set(draft["source_category"])
+
+        self.source_entry.delete(0, "end")
+        self.source_entry.insert(0, draft["source"])
+
+        self.heading_entry.delete("1.0", "end")
+        if draft["heading"]:
+            self.heading_entry.insert("1.0", draft["heading"])
+
+        self.text_box.delete("1.0", "end")
+        if draft["text"]:
+            self.text_box.insert("1.0", draft["text"])
+
+        self.confidence_entry.delete(0, "end")
+        self.confidence_entry.insert(0, draft["confidence"] or "100")
+
+        self.image_list = draft["images"]
+        self._refresh_previews()
 
 
 # =============================================================================

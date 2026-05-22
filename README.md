@@ -6,7 +6,7 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 <br>
 <p align="center">
-  <img src="assets/annotator_ui.png" alt="Fake News Annotator UI" width="800">
+  <img src="assets/annotator_ui.png" alt="Fake News Annotator UI" width="600">
 </p>
 
 ---
@@ -18,7 +18,7 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 | File | Platform |
 |------|----------|
 | `FakeNewsAnnotator-Windows.exe` | Windows 10/11 (64-bit) |
-| `FakeNewsAnnotator-macOS-AppleSilicon.zip` | macOS (Apple M1/M2/M3/M4) |
+| `FakeNewsAnnotator-macOS-AppleSilicon.zip` | macOS (Apple M1/M2/M3/M4/M5) |
 | `FakeNewsAnnotator-macOS-Intel.zip` | macOS (Intel processors) |
 | `FakeNewsAnnotator-Linux` | Ubuntu / Debian / Fedora |
 
@@ -68,6 +68,10 @@ The tool will automatically create `dataset.csv`, `images/` folder, and a config
 
 ## 🖥️ How to Use
 
+The application has two modes: **Annotate** (for adding new data) and **Review** (for checking and editing existing data). You can switch between them using the toggle at the top left of the screen.
+
+### Annotate Mode
+
 1. **Enter your name** in the "Annotator Name" field (saved automatically for next time)
 2. **Select a label**: click either **Fake** or **Real** (required)
 3. **If Fake**: select the **Fake News Type** — Misinformation, Rumor, or Clickbait (required for Fake entries)
@@ -82,6 +86,15 @@ The tool will automatically create `dataset.csv`, `images/` folder, and a config
    - Drag and drop images into the drop zone
 10. Click **"💾 Save Entry"**
 11. A confirmation popup will appear. Fields are cleared for the next entry.
+
+### Review Mode
+
+1. Switch to **Review** mode to browse your saved annotations from `dataset.csv`.
+2. Use the **Prev** and **Next** buttons at the bottom to navigate through your records.
+3. You can instantly jump to a record by clicking the record number, typing a new number, and pressing Enter.
+4. **Edit entries**: Make changes to any field and click **"🔄 Update Entry"**. (If you try to navigate away without saving, the app will warn you!)
+5. **Delete entries**: Click the trash can icon at the bottom right to permanently remove an entry.
+6. **View Images**: Click on any small image thumbnail to view it in a larger, full-resolution popup window.
 
 ### Validation Rules
 
