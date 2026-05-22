@@ -2,7 +2,7 @@
 
 A standalone GUI tool for collecting a multimodal fake news detection dataset. Multiple annotators can use this tool to enter news text, attach images, classify entries as Fake or Real, and specify the type of fake news. All data is saved in a structured CSV file with images stored locally.
 
-**No coding knowledge required** — download a single file, double-click, and start annotating.
+**No coding knowledge required** — download a single file, double-click, and start annotating. 
 
 <br>
 <p align="center">
