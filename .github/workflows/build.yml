@@ -122,7 +122,7 @@ jobs:
             | File | Platform |
             |------|----------|
             | `FakeNewsAnnotator-Windows.exe` | Windows 10/11 (64-bit) |
-            | `FakeNewsAnnotator-macOS-AppleSilicon` | macOS (Apple M1/M2/M3/M4) |
+            | `FakeNewsAnnotator-macOS-AppleSilicon` | macOS (Apple M1/M2/M3/M4/M5) |
             | `FakeNewsAnnotator-macOS-Intel` | macOS (Intel) |
             | `FakeNewsAnnotator-Linux` | Ubuntu / Debian / Fedora |
 
