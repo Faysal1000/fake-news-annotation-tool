@@ -94,7 +94,7 @@ def send_id(message):
     chat_id = message.chat.id
     bot.reply_to(message, f"Your Chat ID is: `{chat_id}`", parse_mode="Markdown")
 
-def send_link_to_owner(message, command, link):
+def send_link_to_owner(message, command, link=None):
     """Core logic to route the submitted link to the assigned team member."""
     owner_name = CATEGORIES.get(command)
     owner_id = CHAT_IDS.get(owner_name)
@@ -109,9 +109,15 @@ def send_link_to_owner(message, command, link):
                     full_category = cats[0].capitalize()
                     break
 
-            # Forward the link to the assigned owner
-            text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
-            bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+            # Forward the link or message to the assigned owner
+            if link is not None:
+                text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
+                bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+            else:
+                text_to_send = f"📥 **New {full_category} Submission from {sender_name}!**"
+                bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+                bot.copy_message(owner_id, message.chat.id, message.message_id)
+
             bot.reply_to(message, f"✅ Successfully sent to **{owner_name}**!", parse_mode="Markdown")
         except Exception as e:
             bot.reply_to(message, f"❌ Failed to send. Has {owner_name} started a chat with this bot yet?")
@@ -125,15 +131,20 @@ def handle_category(message):
     command = parts[0][1:].lower() 
     
     if len(parts) < 2:
-        # Enforce that a link must be provided in the same message
-        msg = f"⚠️ **Error!** You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
-        bot.reply_to(message, msg, parse_mode="Markdown")
+        # Prompt the user to provide the article or image in the next message
+        msg = bot.reply_to(message, "Please send the article (text, link, or image with caption) now.")
+        bot.register_next_step_handler(msg, process_article_step, command)
         return
         
     link = parts[1]
     send_link_to_owner(message, command, link)
 
-@bot.message_handler(func=lambda message: True)
+def process_article_step(message, command):
+    """Handles the message sent after the user types a command without a link."""
+    # We pass link=None so it copies the entire message (including images/text)
+    send_link_to_owner(message, command, link=None)
+
+@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'audio'])
 def handle_invalid(message):
     """Fallback handler for invalid commands or plain text messages."""
     text = "⚠️ **Error! Invalid command or format.**\n\n"

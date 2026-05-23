@@ -84,7 +84,7 @@ def send_id(message):
     chat_id = message.chat.id
     bot.reply_to(message, f"Your Chat ID is: `{chat_id}`", parse_mode="Markdown")
 
-def send_link_to_owner(message, command, link):
+def send_link_to_owner(message, command, link=None):
     owner_name = CATEGORIES.get(command)
     owner_id = CHAT_IDS.get(owner_name)
     
@@ -97,8 +97,14 @@ def send_link_to_owner(message, command, link):
                     full_category = cats[0].capitalize()
                     break
 
-            text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
-            bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+            if link is not None:
+                text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
+                bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+            else:
+                text_to_send = f"📥 **New {full_category} Submission from {sender_name}!**"
+                bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
+                bot.copy_message(owner_id, message.chat.id, message.message_id)
+
             bot.reply_to(message, f"✅ Successfully sent to **{owner_name}**!", parse_mode="Markdown")
         except Exception as e:
             bot.reply_to(message, f"❌ Failed to send. Has {owner_name} started a chat with this bot yet?")
@@ -111,14 +117,17 @@ def handle_category(message):
     command = parts[0][1:].lower() 
     
     if len(parts) < 2:
-        msg = f"⚠️ **Error!** You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
-        bot.reply_to(message, msg, parse_mode="Markdown")
+        msg = bot.reply_to(message, "Please send the article (text, link, or image with caption) now.")
+        bot.register_next_step_handler(msg, process_article_step, command)
         return
         
     link = parts[1]
     send_link_to_owner(message, command, link)
 
-@bot.message_handler(func=lambda message: True)
+def process_article_step(message, command):
+    send_link_to_owner(message, command, link=None)
+
+@bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'audio'])
 def handle_invalid(message):
     text = "⚠️ **Error! Invalid command or format.**\n\n"
     text += "You must use one of the following commands along with a link:\n\n"
