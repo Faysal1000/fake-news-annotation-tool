@@ -120,7 +120,7 @@ CSV_COLUMNS = ["id", "heading", "text", "image_path", "label", "multi_category",
 # First entry is empty string (no category selected).
 # "Other" is provided as a catch-all for categories not in the list.
 CATEGORIES = ["", "Politics", "Health", "Science", "Technology", "Sports",
-              "Entertainment", "Business", "Education", "Environment",
+              "Entertainment", "Religion", "Education", "Environment",
               "International", "Miscellaneous"]
 
 # MULTI_CATEGORIES: Sub-classification options shown when the label is "Fake".

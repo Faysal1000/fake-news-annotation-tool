@@ -42,7 +42,7 @@ CATEGORIES = {
     "entertainment": "Airin", "ent": "Airin",
     "science": "Mansib", "sci": "Mansib",
     "environment": "Mansib", "env": "Mansib",
-    "business": "Eshika", "b": "Eshika",
+    "religion": "Eshika", "r": "Eshika",
     "technology": "Eshika", "t": "Eshika",
     "education": "Faysal", "edu": "Faysal",
     "health": "Faysal", "h": "Faysal"
@@ -53,7 +53,7 @@ USAGE_INFO = {
     "Rafsan": [("sports", "s"), ("international", "i")],
     "Airin": [("politics", "p"), ("entertainment", "ent")],
     "Mansib": [("science", "sci"), ("environment", "env")],
-    "Eshika": [("business", "b"), ("technology", "t")],
+    "Eshika": [("religion", "r"), ("technology", "t")],
     "Faysal": [("education", "edu"), ("health", "h")],
 }
 

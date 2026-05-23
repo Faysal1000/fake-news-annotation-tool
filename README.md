@@ -214,7 +214,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) t
 ## Categories Reference
 
 ### News Categories
-Politics, Health, Science, Technology, Sports, Entertainment, Business, Education, Environment, International, Miscellaneous
+Politics, Health, Science, Technology, Sports, Entertainment, Religion, Education, Environment, International, Miscellaneous
 
 ### Source Categories
 News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, Website, Miscellaneous
