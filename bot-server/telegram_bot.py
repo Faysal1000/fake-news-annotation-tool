@@ -65,12 +65,12 @@ def get_usage_text():
     """Generates the help/usage string dynamically based on USAGE_INFO."""
     text = ""
     for owner, cats in USAGE_INFO.items():
-        text += f"👤 **{owner}**:\n"
+        text += f"[User] **{owner}**:\n"
         for long_cat, short_cat in cats:
-            text += f"   • `/{long_cat}` (shortcut: `/{short_cat}`)\n"
+            text += f"   - `/{long_cat}` (shortcut: `/{short_cat}`)\n"
         text += "\n"
         
-    text += "📝 **Example usage:**\n"
+    text += "[Example usage]:\n"
     text += "`/p https://news.com`\n"
     text += "`/politics https://news.com`\n\n"
     text += "To get your Chat ID, type: `/myid`"
@@ -83,7 +83,7 @@ def get_usage_text():
 @bot.message_handler(commands=['usage', 'help', 'start'])
 def send_usage(message):
     """Handles the welcome and usage guide commands."""
-    text = "📚 **News Annotation Bot Commands**\n\n"
+    text = "[News Annotation Bot Commands]\n\n"
     text += "You can use the full name or the short version. Make sure to put the link right after it with a space!\n\n"
     text += get_usage_text()
     bot.reply_to(message, text, parse_mode="Markdown")
@@ -110,13 +110,13 @@ def send_link_to_owner(message, command, link):
                     break
 
             # Forward the link to the assigned owner
-            text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
+            text_to_send = f"[New Link] A {full_category} link from {sender_name}!\n\n{link}"
             bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
-            bot.reply_to(message, f"✅ Successfully sent to **{owner_name}**!", parse_mode="Markdown")
+            bot.reply_to(message, f"[Success] Sent to **{owner_name}**!", parse_mode="Markdown")
         except Exception as e:
-            bot.reply_to(message, f"❌ Failed to send. Has {owner_name} started a chat with this bot yet?")
+            bot.reply_to(message, f"[Error] Failed to send. Has {owner_name} started a chat with this bot yet?")
     else:
-        bot.reply_to(message, f"⚠️ Cannot send! I don't have the Chat ID for **{owner_name}**.", parse_mode="Markdown")
+        bot.reply_to(message, f"[Warning] Cannot send! I don't have the Chat ID for **{owner_name}**.", parse_mode="Markdown")
 
 @bot.message_handler(commands=list(CATEGORIES.keys()))
 def handle_category(message):
@@ -126,7 +126,7 @@ def handle_category(message):
     
     if len(parts) < 2:
         # Enforce that a link must be provided in the same message
-        msg = f"⚠️ **Error!** You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
+        msg = f"[Error] You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
         bot.reply_to(message, msg, parse_mode="Markdown")
         return
         
@@ -136,11 +136,11 @@ def handle_category(message):
 @bot.message_handler(func=lambda message: True)
 def handle_invalid(message):
     """Fallback handler for invalid commands or plain text messages."""
-    text = "⚠️ **Error! Invalid command or format.**\n\n"
+    text = "[Error] Invalid command or format.\n\n"
     text += "You must use one of the following commands along with a link:\n\n"
     text += get_usage_text()
     bot.reply_to(message, text, parse_mode="Markdown")
 
 if __name__ == "__main__":
-    print("🤖 Telegram routing bot is running! Press Ctrl+C to stop.")
+    print("[Started] Telegram routing bot is running! Press Ctrl+C to stop.")
     bot.infinity_polling()

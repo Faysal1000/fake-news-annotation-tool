@@ -1,4 +1,4 @@
-# 📰 Fake News Dataset Annotator
+# Fake News Dataset Annotator
 
 A standalone GUI tool for collecting a multimodal fake news detection dataset. Multiple annotators can use this tool to enter news text, attach images, classify entries as Fake or Real, and specify the type of fake news. All data is saved in a structured CSV file with images stored locally.
 
@@ -11,7 +11,7 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 ---
 
-## ⬇️ Download & Run
+## Download & Run
 
 Go to the [**Releases**](../../releases/latest) page and download the file for your operating system:
 
@@ -66,7 +66,7 @@ The tool will automatically create `dataset.csv`, `images/` folder, and a config
 
 ---
 
-## 🖥️ How to Use
+## How to Use
 
 The application has two modes: **Annotate** (for adding new data) and **Review** (for checking and editing existing data). You can switch between them using the toggle at the top left of the screen.
 
@@ -109,7 +109,7 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
 
 ---
 
-## 📁 Output Files
+## Output Files
 
 After saving entries, the following files are created **next to the executable**:
 
@@ -153,7 +153,7 @@ Example: `Fake_00042_550e8400-e29b-41d4-a716-446655440000_Faysal.jpg`
 
 ---
 
-## 📤 Submitting Your Data
+## Submitting Your Data
 
 When you are done annotating, send these to the project lead:
 
@@ -164,14 +164,14 @@ Keep the folder structure intact so the image paths in the CSV remain valid.
 
 ---
 
-## 🛠️ For Developers
+## For Developers
 
 ### Running from source
 
 ```bash
 # Clone the repository
 git clone https://github.com/Faysal1000/fake-news-annotation-tool.git
-cd fake-news-annotation-tool
+cd fake-news-annotation-tool/annotator
 
 # Install dependencies
 pip install -r requirements.txt
@@ -198,7 +198,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) t
 
 ---
 
-## ❓ Troubleshooting
+## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
@@ -211,7 +211,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) t
 
 ---
 
-## 📋 Categories Reference
+## Categories Reference
 
 ### News Categories
 Politics, Health, Science, Technology, Sports, Entertainment, Business, Education, Environment, International, Miscellaneous
@@ -226,22 +226,26 @@ News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, We
 
 ---
 
-## 🤖 Telegram Link Routing Bot
+## Telegram Link Routing Bot
 
-This project includes a built-in Telegram bot (`telegram_bot.py`) to easily route news links to assigned annotators. If you find a news article that belongs to another team member's assigned category, you can just text the link to the bot, and it will instantly forward it to them.
+This project includes a built-in Telegram bot (located in the `bot-server/` directory) to easily route news links to assigned annotators. If you find a news article that belongs to another team member's assigned category, you can just text the link to the bot, and it will instantly forward it to them.
 
 ### Setup Instructions
 
-1. Create a Telegram bot using [BotFather](https://t.me/botfather) and get your Bot Token.
-2. Rename `.env.example` to `.env` and insert your token:
+1. Create a Telegram bot using BotFather and get your Bot Token.
+2. Navigate to the `bot-server/` directory:
+   ```bash
+   cd bot-server
+   ```
+3. Rename `.env.example` to `.env` and insert your token:
    ```env
    TELEGRAM_BOT_TOKEN=your_token_here
    ```
-3. Have all team members start a conversation with your bot and send the command `/myid` to get their unique Chat IDs.
-4. Update the `CHAT_IDS` and `CATEGORIES` dictionaries in `telegram_bot.py` with your team's IDs and assigned categories.
-5. Run the bot:
+4. Have all team members start a conversation with your bot and send the command `/myid` to get their unique Chat IDs.
+5. Update the `CHAT_IDS` and `CATEGORIES` dictionaries in `bot-server/telegram_bot.py` with your team's IDs and assigned categories.
+6. Run the bot:
    ```bash
-   pip install python-dotenv pyTelegramBotAPI
+   pip install -r requirements.txt
    python telegram_bot.py
    ```
 
