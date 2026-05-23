@@ -10,6 +10,11 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("No TELEGRAM_BOT_TOKEN found in environment variables. Please check your .env file.")
 
+# If running on PythonAnywhere free tier, we MUST configure the proxy explicitly
+if "PYTHONANYWHERE_DOMAIN" in os.environ:
+    from telebot import apihelper
+    apihelper.proxy = {'https': 'http://proxy.server:3128'}
+
 bot = telebot.TeleBot(TOKEN)
 
 # Clear any cached autocomplete commands from Telegram servers
