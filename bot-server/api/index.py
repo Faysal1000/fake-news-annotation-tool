@@ -11,7 +11,7 @@ TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("No TELEGRAM_BOT_TOKEN found in environment variables.")
 
-bot = telebot.TeleBot(TOKEN)
+bot = telebot.TeleBot(TOKEN, threaded=False)
 app = Flask(__name__)
 
 # ------------------------------------------------------------------
@@ -57,12 +57,12 @@ USAGE_INFO = {
 def get_usage_text():
     text = ""
     for owner, cats in USAGE_INFO.items():
-        text += f"[User] **{owner}**:\n"
+        text += f"👤 **{owner}**:\n"
         for long_cat, short_cat in cats:
-            text += f"   - `/{long_cat}` (shortcut: `/{short_cat}`)\n"
+            text += f"   • `/{long_cat}` (shortcut: `/{short_cat}`)\n"
         text += "\n"
         
-    text += "[Example usage]:\n"
+    text += "📝 **Example usage:**\n"
     text += "`/p https://news.com`\n"
     text += "`/politics https://news.com`\n\n"
     text += "To get your Chat ID, type: `/myid`"
@@ -74,7 +74,7 @@ def get_usage_text():
 
 @bot.message_handler(commands=['usage', 'help', 'start'])
 def send_usage(message):
-    text = "[News Annotation Bot Commands]\n\n"
+    text = "📚 **News Annotation Bot Commands**\n\n"
     text += "You can use the full name or the short version. Make sure to put the link right after it with a space!\n\n"
     text += get_usage_text()
     bot.reply_to(message, text, parse_mode="Markdown")
@@ -97,13 +97,13 @@ def send_link_to_owner(message, command, link):
                     full_category = cats[0].capitalize()
                     break
 
-            text_to_send = f"[New Link] A {full_category} link from {sender_name}!\n\n{link}"
+            text_to_send = f"📥 **New {full_category} Link from {sender_name}!**\n\n{link}"
             bot.send_message(owner_id, text_to_send, parse_mode="Markdown")
-            bot.reply_to(message, f"[Success] Sent to **{owner_name}**!", parse_mode="Markdown")
+            bot.reply_to(message, f"✅ Successfully sent to **{owner_name}**!", parse_mode="Markdown")
         except Exception as e:
-            bot.reply_to(message, f"[Error] Failed to send. Has {owner_name} started a chat with this bot yet?")
+            bot.reply_to(message, f"❌ Failed to send. Has {owner_name} started a chat with this bot yet?")
     else:
-        bot.reply_to(message, f"[Warning] Cannot send! I don't have the Chat ID for **{owner_name}**.", parse_mode="Markdown")
+        bot.reply_to(message, f"⚠️ Cannot send! I don't have the Chat ID for **{owner_name}**.", parse_mode="Markdown")
 
 @bot.message_handler(commands=list(CATEGORIES.keys()))
 def handle_category(message):
@@ -111,7 +111,7 @@ def handle_category(message):
     command = parts[0][1:].lower() 
     
     if len(parts) < 2:
-        msg = f"[Error] You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
+        msg = f"⚠️ **Error!** You forgot to provide the link.\n\nPlease type it like this:\n`/{command} https://your-link.com`"
         bot.reply_to(message, msg, parse_mode="Markdown")
         return
         
@@ -120,7 +120,7 @@ def handle_category(message):
 
 @bot.message_handler(func=lambda message: True)
 def handle_invalid(message):
-    text = "[Error] Invalid command or format.\n\n"
+    text = "⚠️ **Error! Invalid command or format.**\n\n"
     text += "You must use one of the following commands along with a link:\n\n"
     text += get_usage_text()
     bot.reply_to(message, text, parse_mode="Markdown")
