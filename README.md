@@ -6,7 +6,7 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 <br>
 <p align="center">
-  <img src="assets/annotator_ui.png" alt="Fake News Annotator UI" width="600">
+  <img src="annotator/assets/annotator_ui.png" alt="Fake News Annotator UI" width="600">
 </p>
 
 ---
