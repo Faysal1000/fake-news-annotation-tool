@@ -15,13 +15,21 @@ Usage:
 import subprocess
 import sys
 import platform
+import os
+from pathlib import Path
 
 def build():
     """Run PyInstaller to create a standalone executable."""
+    # Ensure command runs from the script's directory
+    script_dir = Path(__file__).parent.resolve()
+    os.chdir(script_dir)
 
     # Determine packaging mode based on OS
     # macOS Gatekeeper blocks --onefile + --windowed, so we MUST use --onedir
     mode = "--onedir" if platform.system() == "Darwin" else "--onefile"
+    
+    # Use appropriate separator for --add-data
+    sep = ";" if platform.system() == "Windows" else ":"
 
     # Base PyInstaller command
     cmd = [
@@ -29,6 +37,7 @@ def build():
         "--name", "FakeNewsAnnotator",     # Name of the output executable
         "--windowed",                       # No console window (GUI app)
         mode,                               # --onedir for Mac, --onefile for Win/Linux
+        f"--add-data=version.json{sep}.",   # Include version.json in bundle
         "--noconfirm",                      # Overwrite previous build without asking
         "--clean",                          # Clean cache before building
         "annotator_tool.py",               # The main script to bundle

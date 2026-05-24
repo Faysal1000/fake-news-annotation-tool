@@ -31,7 +31,7 @@ from pathlib import Path
 # Before the main imports, we check if each module is importable.
 # If any are missing, we install everything from requirements.txt.
 # This lets any user run the script directly without a manual pip install step.
-REQUIRED = {"customtkinter": "customtkinter", "PIL": "Pillow", "tkinterdnd2": "tkinterdnd2"}
+REQUIRED = {"customtkinter": "customtkinter", "PIL": "Pillow", "tkinterdnd2": "tkinterdnd2", "requests": "requests"}
 
 def _check_and_install():
     """Check for required packages and install them if missing.
@@ -40,6 +40,8 @@ def _check_and_install():
     and collects any that fail. If there are missing packages, it runs
     pip install using the requirements.txt file located next to this script.
     """
+    if getattr(sys, 'frozen', False):
+        return
     missing = []
     for module, pip_name in REQUIRED.items():
         try:
@@ -69,6 +71,19 @@ import shutil                        # File copy utility
 import json                          # Config file persistence
 import uuid                          # UUID generation for unique entry IDs
 from datetime import datetime        # Timestamps for each saved entry
+import requests                      # For version checking
+import threading                     # For non-blocking API calls
+import platform                      # For OS detection
+
+# Try to import tkinterdnd2 for drag-and-drop wrapper support
+try:
+    # pyrefly: ignore [missing-import]
+    from tkinterdnd2 import TkinterDnD, DND_FILES
+    dnd_available = True
+    dnd_base = TkinterDnD.DnDWrapper
+except ImportError:
+    dnd_available = False
+    dnd_base = object
 
 # =============================================================================
 # CONSTANTS
@@ -188,7 +203,7 @@ def get_entry_count():
     Returns:
         int: Number of entries (rows) in the CSV, or 0 if file doesn't exist.
     """
-    if not CSV_PATH.exists():
+    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
         return 0
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         return sum(1 for _ in csv.DictReader(f))
@@ -212,22 +227,22 @@ def get_label_counts():
     result = {"total": 0, "fake": 0, "real": 0,
               "fake_subcategories": {"Misinformation": 0, "Rumor": 0, "Clickbait": 0},
               "news_categories": {}}
-    if not CSV_PATH.exists():
+    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
         return result
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
             result["total"] += 1
-            label = row.get("label", "").strip()
+            label = (row.get("label") or "").strip()
             if label == "Fake":
                 result["fake"] += 1
-                sub = row.get("multi_category", "").strip()
+                sub = (row.get("multi_category") or "").strip()
                 if sub in result["fake_subcategories"]:
                     result["fake_subcategories"][sub] += 1
             elif label == "Real":
                 result["real"] += 1
             # Count news categories
-            cat = row.get("category", "").strip()
+            cat = (row.get("category") or "").strip()
             if cat:
                 result["news_categories"][cat] = result["news_categories"].get(cat, 0) + 1
     return result
@@ -280,7 +295,7 @@ def sanitize_name(name):
 # MAIN APPLICATION CLASS
 # =============================================================================
 
-class AnnotatorTool(ctk.CTk):
+class AnnotatorTool(ctk.CTk, dnd_base):
     """Main GUI application for annotating fake news dataset entries.
     
     Inherits from customtkinter.CTk (the main window class).
@@ -297,6 +312,15 @@ class AnnotatorTool(ctk.CTk):
         """
         super().__init__()
 
+        # Initialize Drag & Drop if available
+        global dnd_available
+        if dnd_available:
+            try:
+                self.TkdndVersion = TkinterDnD._require(self)
+            except Exception as e:
+                print(f"[WARNING] Failed to load tkdnd Tcl library: {e}")
+                dnd_available = False
+
         # Make sure the images/ directory exists before anything else
         ensure_dirs()
 
@@ -306,8 +330,26 @@ class AnnotatorTool(ctk.CTk):
 
         # Configure the main window title, size, and minimum dimensions
         self.title("📰 Fake News Dataset Annotator")
-        self.geometry("950x900")
-        self.minsize(850, 750)
+        
+        # --- INITIAL WINDOW SIZE SETTINGS ---
+        # You can change the initial opening size by modifying these two values:
+        window_width = 800
+        window_height = 750
+        
+        # Calculate screen center coordinates
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        x_cordinate = int((screen_width / 2) - (window_width / 2))
+        y_cordinate = int((screen_height / 2) - (window_height / 2))
+        
+        self.geometry(f"{window_width}x{window_height}+{x_cordinate}+{y_cordinate}")
+        self.minsize(700, 600)
+
+        # Check for updates in the background
+        threading.Thread(target=self._check_for_updates, daemon=True).start()
+
+        # Handle window close safely
+        self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
         # IMAGE LIST: Stores all images attached to the current entry.
         # Each item in the list is a tuple of (file_path, pil_image):
@@ -704,22 +746,18 @@ class AnnotatorTool(ctk.CTk):
         Browse or Paste instead. This gracefully degrades on systems
         without drag-and-drop support.
         """
-        try:
-            # pyrefly: ignore [missing-import]
-            from tkinterdnd2 import DND_FILES, TkinterDnD
-            self.drop_target_register = None
+        global dnd_available
+        if dnd_available:
             try:
-                # Load the tkdnd Tcl extension into the Tk interpreter
-                self.tk.call('package', 'require', 'tkdnd')
                 # Register the drop zone frame to accept file drops
-                self.drop_frame.drop_target_register('DND_Files')
+                self.drop_frame.drop_target_register(DND_FILES)
                 # Bind the drop event to our handler
                 self.drop_frame.dnd_bind('<<Drop>>', self._on_drop)
-            except Exception:
-                # tkdnd Tcl package not available on this system
+            except Exception as e:
+                print(f"[WARNING] Failed to register drop target: {e}")
                 self.drop_label.configure(text="Drag & Drop not available\n(Use Browse or Paste instead)")
-        except ImportError:
-            # tkinterdnd2 Python package not installed
+                dnd_available = False
+        else:
             self.drop_label.configure(text="Drag & Drop not available\n(Use Browse or Paste instead)")
 
     def _on_drop(self, event):
@@ -735,19 +773,18 @@ class AnnotatorTool(ctk.CTk):
         # Get the raw dropped data string
         raw = event.data.strip()
         paths = []
-        # tkdnd wraps paths with spaces in curly braces: {/path/to/my file.png}
-        # If braces are present, extract paths from within them
-        if '{' in raw:
-            import re
-            paths = re.findall(r'\{(.+?)\}', raw)
-        else:
-            # Simple case: space-separated paths (no spaces in filenames)
-            paths = raw.split()
+        
+        # Use regex to parse paths, supporting spaces in paths wrapped in braces
+        import re
+        for match in re.finditer(r'\{([^{}]+)\}|(\S+)', raw):
+            p = match.group(1) or match.group(2)
+            if p:
+                paths.append(p.strip())
 
         # Try to add each dropped file as an image
         added = 0
         for p in paths:
-            path = Path(p.strip())
+            path = Path(p)
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 self._add_image_from_path(path)
                 added += 1
@@ -879,8 +916,9 @@ class AnnotatorTool(ctk.CTk):
                 else:
                     img = pil_img.copy()
                 img.thumbnail(thumb_size)
-                photo = ImageTk.PhotoImage(img)
-                self.preview_photos.append(photo)  # Keep reference alive
+                ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
+                                         size=(img.width, img.height))
+                self.preview_photos.append(ctk_photo)  # Keep reference alive
 
                 # Create a card frame for this thumbnail
                 frame = ctk.CTkFrame(grid_frame, fg_color="#222240",
@@ -888,7 +926,7 @@ class AnnotatorTool(ctk.CTk):
                 frame.grid(row=i // cols, column=i % cols, padx=4, pady=4)
 
                 # Display the thumbnail image (click to enlarge)
-                lbl = ctk.CTkLabel(frame, image=photo, text="", cursor="hand2")
+                lbl = ctk.CTkLabel(frame, image=ctk_photo, text="", cursor="hand2")
                 lbl.pack(padx=4, pady=(4, 0))
                 lbl.bind("<Button-1>", lambda e, idx=i: self._show_image_popup(idx))
 
@@ -949,11 +987,12 @@ class AnnotatorTool(ctk.CTk):
 
         popup.geometry(f"{img.width + 40}x{img.height + 80}")
 
-        photo = ImageTk.PhotoImage(img)
+        ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
+                                  size=(img.width, img.height))
         # Must keep a reference so the image isn't garbage collected
-        popup._photo_ref = photo
+        popup._photo_ref = ctk_photo
 
-        lbl = ctk.CTkLabel(popup, image=photo, text="")
+        lbl = ctk.CTkLabel(popup, image=ctk_photo, text="")
         lbl.pack(expand=True, fill="both", padx=10, pady=(10, 5))
 
         name = path.name if path else f"clipboard_{index+1}.png"
@@ -1113,11 +1152,11 @@ class AnnotatorTool(ctk.CTk):
             image_path_str = ";".join(image_rel_paths)
     
             # --- Step 6: Append the entry as a new row in the CSV ---
-            file_exists = CSV_PATH.exists()
+            file_has_content = CSV_PATH.exists() and CSV_PATH.stat().st_size > 0
             with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
-                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-                # Write the header row only if this is a brand new CSV file
-                if not file_exists:
+                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+                # Write the header row only if this is a brand new or empty CSV file
+                if not file_has_content:
                     writer.writeheader()
                 # Write the data row with all collected fields
                 writer.writerow({
@@ -1185,6 +1224,37 @@ class AnnotatorTool(ctk.CTk):
         self._clear_fields()
         self.status_label.configure(text="All fields cleared", text_color="#888")
 
+    def _has_unsaved_annotate_work(self):
+        """Check if there is any unsaved work in Annotate mode."""
+        if self.current_mode != "annotate":
+            return False
+        
+        if self.label_var.get(): return True
+        if self.heading_entry.get("1.0", "end-1c").strip(): return True
+        if self.text_box.get("1.0", "end-1c").strip(): return True
+        if self.source_entry.get().strip(): return True
+        if self.source_cat_var.get(): return True
+        if self.category_var.get(): return True
+        if self.multi_cat_var.get(): return True
+        if len(self.image_list) > 0: return True
+        
+        return False
+
+    def _on_closing(self):
+        """Handle the window close event to prevent accidental data loss."""
+        if self.current_mode == "review":
+            if not self._check_unsaved_changes():
+                return
+        elif self.current_mode == "annotate":
+            if self._has_unsaved_annotate_work():
+                confirm = messagebox.askyesno(
+                    "Unsaved Work",
+                    "You have unsaved annotation work. Are you sure you want to exit without saving?"
+                )
+                if not confirm:
+                    return
+        self.destroy()
+
     def _apply_filter(self, filter_name, keep_index=False):
         """Filter the dataset based on the clicked stat."""
         if self.current_mode != "review":
@@ -1211,11 +1281,14 @@ class AnnotatorTool(ctk.CTk):
         
         # In Review mode, always attempt to display the current record
         if self.dataset_records:
+            self.record_index_entry.configure(state="normal")
             self._display_record(self.current_review_index)
         else:
             self._clear_fields()
+            self.record_index_entry.configure(state="normal")
             self.record_index_entry.delete(0, "end")
             self.record_index_entry.insert(0, "0")
+            self.record_index_entry.configure(state="disabled")
             self.record_total_label.configure(text="of 0")
             self.prev_btn.configure(state="disabled")
             self.next_btn.configure(state="disabled")
@@ -1311,6 +1384,9 @@ class AnnotatorTool(ctk.CTk):
         if "Annotate" in mode_name:
             if self.current_mode == "annotate":
                 return
+            if not self._check_unsaved_changes():
+                self.mode_switcher.set("🔍 Review")
+                return
             self.current_mode = "annotate"
             self.nav_frame.pack_forget()
             self.review_btn_frame.pack_forget()
@@ -1339,7 +1415,7 @@ class AnnotatorTool(ctk.CTk):
     def _load_dataset(self):
         """Load all records from the dataset CSV into memory for review."""
         self.all_dataset_records = []
-        if not CSV_PATH.exists():
+        if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
             self.dataset_records = []
             return
         with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
@@ -1362,6 +1438,7 @@ class AnnotatorTool(ctk.CTk):
 
         # Update the navigation counter and button states
         total = len(self.dataset_records)
+        self.record_index_entry.configure(state="normal")
         self.record_index_entry.delete(0, "end")
         self.record_index_entry.insert(0, str(index + 1))
         self.record_total_label.configure(text=f"of {total}")
@@ -1373,39 +1450,39 @@ class AnnotatorTool(ctk.CTk):
 
         # Populate each field from the record
         self.annotator_entry.delete(0, "end")
-        self.annotator_entry.insert(0, record.get("annotator", ""))
+        self.annotator_entry.insert(0, record.get("annotator") or "")
 
-        label = record.get("label", "")
+        label = record.get("label") or ""
         if label:
             self.label_var.set(label)
             self._on_label_change()
 
-        multi_cat = record.get("multi_category", "")
+        multi_cat = record.get("multi_category") or ""
         if label == "Fake" and multi_cat in MULTI_CATEGORIES:
             self.multi_cat_var.set(multi_cat)
 
-        self.category_var.set(record.get("category", ""))
-        self.source_cat_var.set(record.get("source_category", ""))
+        self.category_var.set(record.get("category") or "")
+        self.source_cat_var.set(record.get("source_category") or "")
 
         self.source_entry.delete(0, "end")
-        self.source_entry.insert(0, record.get("source", ""))
+        self.source_entry.insert(0, record.get("source") or "")
 
         self.heading_entry.delete("1.0", "end")
-        heading = record.get("heading", "")
+        heading = record.get("heading") or ""
         if heading:
             self.heading_entry.insert("1.0", heading)
 
         self.text_box.delete("1.0", "end")
-        text = record.get("text", "")
+        text = record.get("text") or ""
         if text:
             self.text_box.insert("1.0", text)
 
         self.confidence_entry.delete(0, "end")
-        self.confidence_entry.insert(0, record.get("annotation_confidence", "100"))
+        self.confidence_entry.insert(0, record.get("annotation_confidence") or "100")
 
         # Load images referenced in the record
         self.image_list.clear()
-        image_paths = record.get("image_path", "")
+        image_paths = record.get("image_path") or ""
         if image_paths:
             for rel_path in image_paths.split(";"):
                 rel_path = rel_path.strip()
@@ -1438,20 +1515,33 @@ class AnnotatorTool(ctk.CTk):
         confidence = self.confidence_entry.get().strip()
         
         changed = False
-        if annotator != record.get("annotator", ""): changed = True
-        elif label != record.get("label", ""): changed = True
-        elif heading != record.get("heading", ""): changed = True
-        elif text != record.get("text", ""): changed = True
-        elif source != record.get("source", ""): changed = True
-        elif source_category != record.get("source_category", ""): changed = True
-        elif category != record.get("category", ""): changed = True
-        elif multi_cat != record.get("multi_category", ""): changed = True
-        elif confidence != record.get("annotation_confidence", "100"): changed = True
+        if annotator != (record.get("annotator") or ""): changed = True
+        elif label != (record.get("label") or ""): changed = True
+        elif heading != (record.get("heading") or ""): changed = True
+        elif text != (record.get("text") or ""): changed = True
+        elif source != (record.get("source") or ""): changed = True
+        elif source_category != (record.get("source_category") or ""): changed = True
+        elif category != (record.get("category") or ""): changed = True
+        elif multi_cat != (record.get("multi_category") or ""): changed = True
+        elif confidence != (record.get("annotation_confidence") or "100"): changed = True
         
         if not changed:
-            orig_images = [p for p in record.get("image_path", "").split(";") if p.strip()]
+            orig_images = [p.strip().replace("\\", "/") for p in (record.get("image_path") or "").split(";") if p.strip()]
             if len(self.image_list) != len(orig_images):
                 changed = True
+            else:
+                for (path, pil_img), orig_rel_path in zip(self.image_list, orig_images):
+                    if path is None:
+                        changed = True
+                        break
+                    try:
+                        rel = path.relative_to(SCRIPT_DIR)
+                        if str(rel).replace("\\", "/") != orig_rel_path:
+                            changed = True
+                            break
+                    except ValueError:
+                        changed = True
+                        break
                 
         if not changed:
             return True
@@ -1462,9 +1552,19 @@ class AnnotatorTool(ctk.CTk):
             "Do you want to save them before moving?"
         )
         
-        if response is True:  # Yes
-            return self._update_entry(show_success=False)
-        elif response is False:  # No
+        if response is True:  # Yes — try to save
+            save_ok = self._update_entry(show_success=False)
+            if not save_ok:
+                # Save failed (validation error). Give the user a second
+                # chance to discard instead of trapping them.
+                discard = messagebox.askyesno(
+                    "Save Failed",
+                    "Could not save due to validation errors.\n\n"
+                    "Do you want to discard your changes and continue?"
+                )
+                return discard  # True = discard & continue, False = stay
+            return True
+        elif response is False:  # No — discard changes
             return True
         else:  # Cancel
             return False
@@ -1565,7 +1665,7 @@ class AnnotatorTool(ctk.CTk):
             multi_cat = "Real"
 
         record = self.dataset_records[self.current_review_index]
-        entry_id = record.get("id", generate_id())
+        entry_id = record.get("id") or generate_id()
         sanitized_annotator = sanitize_name(annotator)
 
         # Process images: keep existing project images, copy new external ones
@@ -1604,6 +1704,8 @@ class AnnotatorTool(ctk.CTk):
             record["multi_category"] = multi_cat
             record["annotation_confidence"] = str(confidence)
             record["image_path"] = ";".join(image_rel_paths)
+            if "timestamp" not in record or not record.get("timestamp"):
+                record["timestamp"] = datetime.now().isoformat()
     
             self._rewrite_csv()
         except Exception as e:
@@ -1635,7 +1737,7 @@ class AnnotatorTool(ctk.CTk):
         deleted_record = self.dataset_records.pop(self.current_review_index)
         
         # Also remove from all_dataset_records
-        all_idx = next((i for i, r in enumerate(self.all_dataset_records) if r["id"] == deleted_record["id"]), -1)
+        all_idx = next((i for i, r in enumerate(self.all_dataset_records) if (r.get("id") or "") == (deleted_record.get("id") or "")), -1)
         if all_idx >= 0:
             self.all_dataset_records.pop(all_idx)
 
@@ -1660,7 +1762,7 @@ class AnnotatorTool(ctk.CTk):
     def _rewrite_csv(self):
         """Rewrite the entire CSV file from the in-memory records list."""
         with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
             writer.writeheader()
             for record in self.all_dataset_records:
                 writer.writerow(record)
@@ -1728,13 +1830,96 @@ class AnnotatorTool(ctk.CTk):
         self.image_list = draft["images"]
         self._refresh_previews()
 
+    def _get_resource_path(self, relative_path):
+        """Get absolute path to resource, works for dev and for PyInstaller."""
+        try:
+            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            base_path = Path(sys._MEIPASS)
+        except Exception:
+            base_path = Path(__file__).parent.resolve()
+        
+        return str(base_path / relative_path)
 
-# =============================================================================
-# ENTRY POINT
-# =============================================================================
-# When this script is run directly (not imported), create the application
-# window and start the tkinter event loop. The event loop keeps the window
-# open and responsive until the user closes it.
+    def _check_for_updates(self):
+        """Check GitHub for a new release tag in the background."""
+        try:
+            # Load current version
+            version_file = self._get_resource_path("version.json")
+            if not os.path.exists(version_file):
+                return
+            
+            with open(version_file, "r") as f:
+                data = json.load(f)
+                current_version = data.get("version", "v1.0.0").strip().lower().lstrip('v')
+
+            # Fetch latest version from GitHub API
+            url = "https://api.github.com/repos/Faysal1000/fake-news-annotation-tool/releases/latest"
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                latest_tag = response.json().get("tag_name")
+                if latest_tag:
+                    latest_normalized = latest_tag.strip().lower().lstrip('v')
+                    if latest_normalized != current_version:
+                        # Update needed! Safely call the UI method from the main thread
+                        self.after(2000, lambda: self._show_update_popup(latest_tag))
+        except Exception as e:
+            print(f"Update check failed (this is non-fatal): {e}")
+
+    def _show_update_popup(self, latest_version):
+        """Show a popup with the OS-specific command to update the app."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("Update Available")
+        popup.geometry("600x350")
+        popup.attributes("-topmost", True)
+        
+        # Center the popup relative to main window
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - 300
+        y = self.winfo_y() + (self.winfo_height() // 2) - 175
+        popup.geometry(f"+{x}+{y}")
+        
+        ctk.CTkLabel(popup, text=f"🎉 A new version ({latest_version}) is available!", 
+                     font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
+        
+        ctk.CTkLabel(popup, text="Please update to get the latest features and bug fixes.", 
+                     font=ctk.CTkFont(size=14)).pack(pady=(0, 15))
+        
+        # Determine OS and Architecture
+        system = platform.system()
+        machine = platform.machine().lower()
+        
+        if system == "Darwin":
+            if "arm" in machine or "aarch" in machine:
+                command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip -o FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip'
+            else:
+                command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-Intel.zip && unzip -o FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip'
+        elif system == "Windows":
+            command = 'mkdir "%USERPROFILE%\\Desktop\\Fake News Dataset" 2>nul & cd "%USERPROFILE%\\Desktop\\Fake News Dataset" & curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Windows.exe'
+        else:
+            command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux'
+
+        # Textbox to show the command
+        cmd_box = ctk.CTkTextbox(popup, height=80, font=ctk.CTkFont(family="Courier", size=12))
+        cmd_box.pack(fill="x", padx=20, pady=10)
+        cmd_box.insert("0.0", command)
+        cmd_box.configure(state="disabled") # Make it read-only
+        
+        def copy_to_clipboard():
+            self.clipboard_clear()
+            self.clipboard_append(command)
+            self.update()
+            copy_btn.configure(text="✅ Copied!")
+            self.after(2000, lambda: copy_btn.configure(text="📋 Copy Command"))
+            
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(pady=20)
+        
+        copy_btn = ctk.CTkButton(btn_frame, text="📋 Copy Command", command=copy_to_clipboard)
+        copy_btn.pack(side="left", padx=10)
+        
+        ctk.CTkButton(btn_frame, text="Close", fg_color="transparent", border_width=1, 
+                      command=popup.destroy).pack(side="left", padx=10)
+
 
 if __name__ == "__main__":
     app = AnnotatorTool()
