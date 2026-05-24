@@ -21,6 +21,16 @@ bot = telebot.TeleBot(TOKEN)
 bot.delete_my_commands()
 
 # ------------------------------------------------------------------
+# STATE VARIABLES
+# ------------------------------------------------------------------
+
+# Dictionary to store the current pending command for each user
+user_pending_command = {}
+
+# Dictionary to store commands for active media groups
+processed_media_groups = {}
+
+# ------------------------------------------------------------------
 # CONFIGURATION
 # ------------------------------------------------------------------
 
@@ -83,6 +93,7 @@ def get_usage_text():
 @bot.message_handler(commands=['usage', 'help', 'start'])
 def send_usage(message):
     """Handles the welcome and usage guide commands."""
+    user_pending_command.pop(message.chat.id, None)
     text = "📚 **News Annotation Bot Commands**\n\n"
     text += "You can use the full name or the short version. Make sure to put the link right after it with a space!\n\n"
     text += get_usage_text()
@@ -91,6 +102,7 @@ def send_usage(message):
 @bot.message_handler(commands=['myid'])
 def send_id(message):
     """Utility command to allow users to fetch their Chat ID for configuration."""
+    user_pending_command.pop(message.chat.id, None)
     chat_id = message.chat.id
     bot.reply_to(message, f"Your Chat ID is: `{chat_id}`", parse_mode="Markdown")
 
@@ -140,21 +152,49 @@ def handle_category(message):
     
     if len(parts) < 2:
         # Prompt the user to provide the article or image in the next message
-        msg = bot.reply_to(message, "Please send the article (text, link, or image with caption) now.")
-        bot.register_next_step_handler(msg, process_article_step, command)
+        user_pending_command[message.chat.id] = command
+        bot.reply_to(message, "Please send the article (text, link, or image with caption) now.")
         return
         
+    user_pending_command.pop(message.chat.id, None)
     link = parts[1]
     send_link_to_owner(message, command, link)
 
-def process_article_step(message, command):
-    """Handles the message sent after the user types a command without a link."""
-    # We pass link=None so it copies the entire message (including images/text)
-    send_link_to_owner(message, command, link=None)
-
 @bot.message_handler(func=lambda message: True, content_types=['text', 'photo', 'video', 'document', 'audio'])
-def handle_invalid(message):
-    """Fallback handler for invalid commands or plain text messages."""
+def handle_message(message):
+    """Handles pending commands, media groups, and invalid messages."""
+    command = None
+
+    if message.content_type == 'text' and message.text.startswith('/'):
+        user_pending_command.pop(message.chat.id, None)
+        text = "⚠️ **Error! Invalid command or format.**\n\n"
+        text += "You must use one of the following commands along with a link:\n\n"
+        text += get_usage_text()
+        bot.reply_to(message, text, parse_mode="Markdown")
+        return
+
+    # Check if we already know this media_group_id
+    if message.media_group_id and message.media_group_id in processed_media_groups:
+        command = processed_media_groups[message.media_group_id]
+        send_link_to_owner(message, command, link=None)
+        return
+        
+    # Check if there is a pending command
+    if message.chat.id in user_pending_command:
+        command = user_pending_command[message.chat.id]
+        
+        # If it's a media group, store the command for other messages in the group
+        if message.media_group_id:
+            processed_media_groups[message.media_group_id] = command
+            # Keep dict bounded to prevent memory leak
+            if len(processed_media_groups) > 1000:
+                processed_media_groups.pop(next(iter(processed_media_groups)))
+            
+        user_pending_command.pop(message.chat.id, None)
+        send_link_to_owner(message, command, link=None)
+        return
+
+    # If we got here, it's an invalid message
     text = "⚠️ **Error! Invalid command or format.**\n\n"
     text += "You must use one of the following commands along with a link:\n\n"
     text += get_usage_text()
