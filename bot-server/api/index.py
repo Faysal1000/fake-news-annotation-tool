@@ -96,12 +96,17 @@ def send_id(message):
     chat_id = message.chat.id
     bot.reply_to(message, f"Your Chat ID is: `{chat_id}`", parse_mode="Markdown")
 
-def send_link_to_owner(message, command, link=None):
+def send_link_to_owner(message, command, link=None, silent=False):
     owner_name = CATEGORIES.get(command)
     owner_id = CHAT_IDS.get(owner_name)
     
     if owner_id and owner_id != "YOUR_ID_HERE":
         try:
+            # In silent mode, just copy the message and return (for extra album images)
+            if silent:
+                bot.copy_message(owner_id, message.chat.id, message.message_id)
+                return
+
             sender_name = message.from_user.first_name or "Unknown"
             if message.from_user.last_name:
                 sender_name += f" {message.from_user.last_name}"
@@ -158,10 +163,10 @@ def handle_message(message):
         bot.reply_to(message, text, parse_mode="Markdown")
         return
 
-    # Check if we already know this media_group_id
+    # Check if we already know this media_group_id (2nd, 3rd, ... image in album)
     if message.media_group_id and message.media_group_id in processed_media_groups:
         command = processed_media_groups[message.media_group_id]
-        send_link_to_owner(message, command, link=None)
+        send_link_to_owner(message, command, link=None, silent=True)
         return
         
     # Check if there is a pending command
