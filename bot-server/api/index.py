@@ -91,6 +91,11 @@ def send_link_to_owner(message, command, link=None):
     if owner_id and owner_id != "YOUR_ID_HERE":
         try:
             sender_name = message.from_user.first_name
+            if message.from_user.last_name:
+                sender_name += f" {message.from_user.last_name}"
+            if message.from_user.username:
+                sender_name += f" (@{message.from_user.username})"
+                
             full_category = command.capitalize()
             for cats in USAGE_INFO.get(owner_name, []):
                 if command in cats: 
