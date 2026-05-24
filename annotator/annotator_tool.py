@@ -325,7 +325,11 @@ class AnnotatorTool(ctk.CTk):
         # Tracks which mode the app is in ('annotate' or 'review')
         self.current_mode = "annotate"
         # Holds all CSV rows loaded into memory for browsing in review mode
+        self.all_dataset_records = []
+        # Holds the currently filtered subset of records
         self.dataset_records = []
+        # The currently active filter in Review mode
+        self.active_filter = None
         # Index of the currently displayed record in review mode
         self.current_review_index = 0
         # Temporarily stores the user's in-progress annotation when switching modes
@@ -378,13 +382,12 @@ class AnnotatorTool(ctk.CTk):
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
 
         # ----- Stats bar: shows total entry count, image count, and label counts -----
-        self.stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=13))
-        self.stats_label.pack(pady=(0, 2))
+        self.stats_frame = ctk.CTkFrame(main, fg_color="transparent")
+        self.stats_frame.pack(pady=(0, 2))
 
         # ----- Category stats bar: shows news category counts on a second line -----
-        self.category_stats_label = ctk.CTkLabel(main, text="", font=ctk.CTkFont(size=12),
-                                                  text_color="#aaa")
-        self.category_stats_label.pack(pady=(0, 10))
+        self.category_stats_frame = ctk.CTkFrame(main, fg_color="transparent")
+        self.category_stats_frame.pack(pady=(0, 10))
 
         # ----- REVIEW NAVIGATION BAR (hidden by default, shown in Review mode) -----
         self.nav_frame = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=6,
@@ -1160,12 +1163,72 @@ class AnnotatorTool(ctk.CTk):
         self._clear_fields()
         self.status_label.configure(text="All fields cleared", text_color="#888")
 
+    def _apply_filter(self, filter_name, keep_index=False):
+        """Filter the dataset based on the clicked stat."""
+        if self.current_mode != "review":
+            return
+        
+        self.active_filter = filter_name
+        
+        if not filter_name or filter_name == "Total":
+            self.dataset_records = list(self.all_dataset_records)
+        elif filter_name in ("Fake", "Real"):
+            self.dataset_records = [r for r in self.all_dataset_records if r.get("label") == filter_name]
+        elif filter_name in ("Misinformation", "Rumor", "Clickbait"):
+            self.dataset_records = [r for r in self.all_dataset_records if r.get("multi_category") == filter_name]
+        else:
+            # Must be a News Category
+            self.dataset_records = [r for r in self.all_dataset_records if r.get("category") == filter_name]
+            
+        if not keep_index:
+            self.current_review_index = 0
+        elif self.current_review_index >= len(self.dataset_records):
+            self.current_review_index = max(0, len(self.dataset_records) - 1)
+            
+        self._update_stats() # Re-render stats to update highlights
+        
+        # In Review mode, always attempt to display the current record
+        if self.dataset_records:
+            self._display_record(self.current_review_index)
+        else:
+            self._clear_fields()
+            self.record_index_entry.delete(0, "end")
+            self.record_index_entry.insert(0, "0")
+            self.record_total_label.configure(text="of 0")
+            self.prev_btn.configure(state="disabled")
+            self.next_btn.configure(state="disabled")
+
+    def _create_stat_label(self, parent, text, filter_key=None, is_separator=False):
+        """Helper to create interactive stat labels inside a frame."""
+        if is_separator:
+            lbl = ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=13))
+            lbl.pack(side="left", padx=5)
+            return
+            
+        is_active = (self.current_mode == "review") and (
+            (filter_key == self.active_filter) or 
+            (self.active_filter is None and filter_key == "Total")
+        )
+        
+        color = "#f39c12" if is_active else ("#ffffff" if ctk.get_appearance_mode() == "Dark" else "#000000")
+        fnt = ctk.CTkFont(size=13, weight="bold" if is_active else "normal", underline=is_active)
+        
+        lbl = ctk.CTkLabel(parent, text=text, font=fnt, text_color=color)
+        lbl.pack(side="left")
+        
+        if filter_key:
+            lbl.bind("<Button-1>", lambda e, k=filter_key: self._apply_filter(k))
+            if self.current_mode == "review":
+                lbl.configure(cursor="hand2")
+            else:
+                lbl.configure(cursor="arrow")
+
     def _update_stats(self):
         """Refresh the stats bar at the top of the UI.
         
         Reads the current entry count from the CSV, image count from
         the images/ folder, label/subcategory counts, and news category
-        counts, then updates both stats labels.
+        counts, then dynamically builds clickable stat labels.
         Called after each save and at startup.
         """
         counts = get_label_counts()
@@ -1175,21 +1238,41 @@ class AnnotatorTool(ctk.CTk):
         real = counts["real"]
         sub = counts["fake_subcategories"]
 
-        # Line 1: Total, Images, Fake, Real + always show subcategory breakdown
-        stats_text = (f"Total: {total}  |  Images: {img_count}  |  "
-                      f"Fake: {fake}  |  Real: {real}  ||  "
-                      f"Misinformation: {sub['Misinformation']}  |  "
-                      f"Rumor: {sub['Rumor']}  |  Clickbait: {sub['Clickbait']}")
-        self.stats_label.configure(text=stats_text)
+        # Clear existing widgets
+        for widget in self.stats_frame.winfo_children():
+            widget.destroy()
+        for widget in self.category_stats_frame.winfo_children():
+            widget.destroy()
 
-        # Line 2: News category counts (only show categories that have data)
+        # Line 1: Total, Images, Fake, Real + always show subcategory breakdown
+        self._create_stat_label(self.stats_frame, f"Total: {total}", filter_key="Total")
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Images: {img_count}", filter_key=None)
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Fake: {fake}", filter_key="Fake")
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Real: {real}", filter_key="Real")
+        self._create_stat_label(self.stats_frame, "||", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Misinformation: {sub['Misinformation']}", filter_key="Misinformation")
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Rumor: {sub['Rumor']}", filter_key="Rumor")
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Clickbait: {sub['Clickbait']}", filter_key="Clickbait")
+
+        # Line 2: News category counts
         news_cats = counts["news_categories"]
         if news_cats:
-            cat_parts = [f"{cat}: {count}" for cat, count in sorted(news_cats.items())]
-            cat_text = "News Categories  ▸  " + "  |  ".join(cat_parts)
+            lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
+            lbl.pack(side="left", padx=(0, 5))
+            
+            sorted_cats = sorted(news_cats.items())
+            for i, (cat, count) in enumerate(sorted_cats):
+                self._create_stat_label(self.category_stats_frame, f"{cat}: {count}", filter_key=cat)
+                if i < len(sorted_cats) - 1:
+                    self._create_stat_label(self.category_stats_frame, "|", is_separator=True)
         else:
-            cat_text = "News Categories  ▸  No entries yet"
-        self.category_stats_label.configure(text=cat_text)
+            lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  No entries yet", font=ctk.CTkFont(size=12), text_color="#aaa")
+            lbl.pack(side="left")
 
 
     # =========================================================================
@@ -1211,35 +1294,38 @@ class AnnotatorTool(ctk.CTk):
             self.review_btn_frame.pack_forget()
             self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
             self._restore_draft()
+            self._update_stats()
         elif "Review" in mode_name:
             if self.current_mode == "review":
                 return
             self._save_draft()
             self.current_mode = "review"
             self._load_dataset()
-            if not self.dataset_records:
+            if not self.all_dataset_records:
                 messagebox.showinfo("No Data",
                     "No entries found in dataset.csv.\nAnnotate some entries first!")
                 self.mode_switcher.set("📝 Annotate")
                 self.current_mode = "annotate"
                 self._restore_draft()
+                self._update_stats()
                 return
             self.annotate_btn_frame.pack_forget()
             self.review_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
             self.nav_frame.pack(fill="x", padx=10, pady=(5, 15),
                                 after=self.review_btn_frame)
-            self.current_review_index = 0
-            self._display_record(self.current_review_index)
 
     def _load_dataset(self):
         """Load all records from the dataset CSV into memory for review."""
-        self.dataset_records = []
+        self.all_dataset_records = []
         if not CSV_PATH.exists():
+            self.dataset_records = []
             return
         with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                self.dataset_records.append(row)
+                self.all_dataset_records.append(row)
+                
+        self._apply_filter(self.active_filter)
 
     def _display_record(self, index):
         """Populate all UI fields with data from the record at the given index.
@@ -1502,7 +1588,8 @@ class AnnotatorTool(ctk.CTk):
             messagebox.showerror("Update Error", f"Failed to update entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return False
 
-        self._update_stats()
+        # Apply filter again to reflect changes visually and filter out records that no longer match
+        self._apply_filter(self.active_filter, keep_index=True)
         if show_success:
             messagebox.showinfo("Update Complete",
                 f"Record {self.current_review_index + 1} updated successfully!")
@@ -1524,31 +1611,36 @@ class AnnotatorTool(ctk.CTk):
             return
 
         deleted_record = self.dataset_records.pop(self.current_review_index)
+        
+        # Also remove from all_dataset_records
+        all_idx = next((i for i, r in enumerate(self.all_dataset_records) if r["id"] == deleted_record["id"]), -1)
+        if all_idx >= 0:
+            self.all_dataset_records.pop(all_idx)
+
         try:
             self._rewrite_csv()
         except Exception as e:
             # Revert the deletion in memory since saving failed
             self.dataset_records.insert(self.current_review_index, deleted_record)
+            if all_idx >= 0:
+                self.all_dataset_records.insert(all_idx, deleted_record)
             messagebox.showerror("Delete Error", f"Failed to delete entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return
-        self._update_stats()
 
-        if not self.dataset_records:
+        self._apply_filter(self.active_filter, keep_index=True)
+
+        if not self.all_dataset_records:
             messagebox.showinfo("No Records", "All records have been deleted.")
             self.mode_switcher.set("📝 Annotate")
             self._toggle_mode("📝 Annotate")
             return
-
-        if self.current_review_index >= len(self.dataset_records):
-            self.current_review_index = len(self.dataset_records) - 1
-        self._display_record(self.current_review_index)
 
     def _rewrite_csv(self):
         """Rewrite the entire CSV file from the in-memory records list."""
         with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
             writer.writeheader()
-            for record in self.dataset_records:
+            for record in self.all_dataset_records:
                 writer.writerow(record)
 
     def _save_draft(self):
