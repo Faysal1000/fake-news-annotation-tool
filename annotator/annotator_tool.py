@@ -305,7 +305,7 @@ class AnnotatorTool(ctk.CTk):
         ctk.set_default_color_theme("blue")
 
         # Configure the main window title, size, and minimum dimensions
-        self.title("📰 Fake News Dataset Annotator v3.0.1")
+        self.title("📰 Fake News Dataset Annotator")
         self.geometry("950x900")
         self.minsize(850, 750)
 
@@ -378,7 +378,7 @@ class AnnotatorTool(ctk.CTk):
         self.mode_switcher.set("📝 Annotate")
         self.mode_switcher.pack(side="left", padx=(0, 10))
 
-        ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator v3.0.1",
+        ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
 
         # ----- Stats bar: shows total entry count, image count, and label counts -----
