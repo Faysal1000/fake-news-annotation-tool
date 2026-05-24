@@ -534,6 +534,19 @@ class AnnotatorTool(ctk.CTk):
                                         border_width=1, border_color="#555")
         self.text_box.pack(fill="x", padx=10, pady=(0, 8))
 
+        # Prevent mouse wheel scrolling in textboxes from bubbling up to the parent scrollable frame
+        def block_scroll(widget):
+            tags = list(widget._textbox.bindtags())
+            if 'Text' in tags:
+                tags.insert(tags.index('Text') + 1, 'BlockScroll')
+                widget._textbox.bindtags(tuple(tags))
+            widget._textbox.bind_class('BlockScroll', '<MouseWheel>', lambda e: "break")
+            widget._textbox.bind_class('BlockScroll', '<Button-4>', lambda e: "break")
+            widget._textbox.bind_class('BlockScroll', '<Button-5>', lambda e: "break")
+
+        block_scroll(self.heading_entry)
+        block_scroll(self.text_box)
+
         # ----- IMAGE INPUT SECTION -----
         # Supports three ways to add images:
         #   1. Browse button: opens a file dialog (multi-select enabled)
@@ -1031,68 +1044,74 @@ class AnnotatorTool(ctk.CTk):
         # List to collect relative paths for all images in this entry
         image_rel_paths = []
 
-        # --- Step 5: Process and save each attached image ---
-        if has_image:
-            for path, pil_img in self.image_list:
-                # Get the current count of images in the folder (for sequential numbering)
-                img_count = get_image_count() + 1
-
-                # Determine the file extension
-                # For file-based images, use the original extension
-                # For clipboard-pasted images, default to .png
-                if path:
-                    ext = path.suffix.lower()
-                else:
-                    ext = ".png"
-
-                # Build the image filename following the naming convention:
-                # {Label}_{5-digit-count}_{uuid}_{annotator}.{extension}
-                # Example: Fake_00042_550e8400-e29b-41d4-a716-446655440000_Faysal.jpg
-                img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
-                img_dest = IMAGES_DIR / img_filename
-
-                # Save the image to the images/ directory
-                if path:
-                    # File-based image: copy the original file preserving metadata
-                    shutil.copy2(path, img_dest)
-                else:
-                    # Clipboard image: save the PIL Image object
-                    src_img = pil_img
-                    # Convert RGBA to RGB if saving as JPEG (JPEG doesnt support alpha)
-                    if src_img.mode == "RGBA" and ext in (".jpg", ".jpeg"):
-                        src_img = src_img.convert("RGB")
-                    src_img.save(img_dest)
-
-                # Store the RELATIVE path (not absolute) for the CSV
-                # This makes the dataset portable across different machines
-                image_rel_paths.append(f"images/{img_filename}")
-
-        # Join multiple image paths with semicolons for the CSV column
-        # Example: "images/Fake_00001_uuid_Faysal.jpg;images/Fake_00002_uuid_Faysal.png"
-        image_path_str = ";".join(image_rel_paths)
-
-        # --- Step 6: Append the entry as a new row in the CSV ---
-        file_exists = CSV_PATH.exists()
-        with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
-            # Write the header row only if this is a brand new CSV file
-            if not file_exists:
-                writer.writeheader()
-            # Write the data row with all collected fields
-            writer.writerow({
-                "id": entry_id,
-                "heading": heading,
-                "text": text,
-                "image_path": image_path_str,
-                "label": label,
-                "multi_category": multi_cat,
-                "source": source,
-                "source_category": source_category,
-                "category": category,
-                "annotator": annotator,
-                "annotation_confidence": confidence,
-                "timestamp": datetime.now().isoformat(),
-            })
+        # --- Step 5 & 6: File operations (Images and CSV) ---
+        # Wrap in try-except because on Windows, the CSV might be locked by Excel
+        try:
+            # --- Step 5: Process and save each attached image ---
+            if has_image:
+                for path, pil_img in self.image_list:
+                    # Get the current count of images in the folder (for sequential numbering)
+                    img_count = get_image_count() + 1
+    
+                    # Determine the file extension
+                    # For file-based images, use the original extension
+                    # For clipboard-pasted images, default to .png
+                    if path:
+                        ext = path.suffix.lower()
+                    else:
+                        ext = ".png"
+    
+                    # Build the image filename following the naming convention:
+                    # {Label}_{5-digit-count}_{uuid}_{annotator}.{extension}
+                    # Example: Fake_00042_550e8400-e29b-41d4-a716-446655440000_Faysal.jpg
+                    img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                    img_dest = IMAGES_DIR / img_filename
+    
+                    # Save the image to the images/ directory
+                    if path:
+                        # File-based image: copy the original file preserving metadata
+                        shutil.copy2(path, img_dest)
+                    else:
+                        # Clipboard image: save the PIL Image object
+                        src_img = pil_img
+                        # Convert RGBA to RGB if saving as JPEG (JPEG doesnt support alpha)
+                        if src_img.mode == "RGBA" and ext in (".jpg", ".jpeg"):
+                            src_img = src_img.convert("RGB")
+                        src_img.save(img_dest)
+    
+                    # Store the RELATIVE path (not absolute) for the CSV
+                    # This makes the dataset portable across different machines
+                    image_rel_paths.append(f"images/{img_filename}")
+    
+            # Join multiple image paths with semicolons for the CSV column
+            # Example: "images/Fake_00001_uuid_Faysal.jpg;images/Fake_00002_uuid_Faysal.png"
+            image_path_str = ";".join(image_rel_paths)
+    
+            # --- Step 6: Append the entry as a new row in the CSV ---
+            file_exists = CSV_PATH.exists()
+            with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
+                writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS)
+                # Write the header row only if this is a brand new CSV file
+                if not file_exists:
+                    writer.writeheader()
+                # Write the data row with all collected fields
+                writer.writerow({
+                    "id": entry_id,
+                    "heading": heading,
+                    "text": text,
+                    "image_path": image_path_str,
+                    "label": label,
+                    "multi_category": multi_cat,
+                    "source": source,
+                    "source_category": source_category,
+                    "category": category,
+                    "annotator": annotator,
+                    "annotation_confidence": confidence,
+                    "timestamp": datetime.now().isoformat(),
+                })
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Failed to save data. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
+            return
 
         # Persist the annotator name for future sessions
         save_config(annotator)
@@ -1442,42 +1461,47 @@ class AnnotatorTool(ctk.CTk):
         sanitized_annotator = sanitize_name(annotator)
 
         # Process images: keep existing project images, copy new external ones
-        image_rel_paths = []
-        for path, pil_img in self.image_list:
-            if path:
-                try:
-                    rel = path.relative_to(SCRIPT_DIR)
-                    image_rel_paths.append(str(rel).replace("\\", "/"))
-                except ValueError:
+        try:
+            image_rel_paths = []
+            for path, pil_img in self.image_list:
+                if path:
+                    try:
+                        rel = path.relative_to(SCRIPT_DIR)
+                        image_rel_paths.append(str(rel).replace("\\", "/"))
+                    except ValueError:
+                        img_count = get_image_count() + 1
+                        ext = path.suffix.lower()
+                        img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                        img_dest = IMAGES_DIR / img_filename
+                        shutil.copy2(path, img_dest)
+                        image_rel_paths.append(f"images/{img_filename}")
+                else:
                     img_count = get_image_count() + 1
-                    ext = path.suffix.lower()
-                    img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                    img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}.png"
                     img_dest = IMAGES_DIR / img_filename
-                    shutil.copy2(path, img_dest)
+                    src_img = pil_img
+                    if src_img.mode == "RGBA":
+                        src_img = src_img.convert("RGB")
+                    src_img.save(img_dest)
                     image_rel_paths.append(f"images/{img_filename}")
-            else:
-                img_count = get_image_count() + 1
-                img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}.png"
-                img_dest = IMAGES_DIR / img_filename
-                src_img = pil_img
-                if src_img.mode == "RGBA":
-                    src_img = src_img.convert("RGB")
-                src_img.save(img_dest)
-                image_rel_paths.append(f"images/{img_filename}")
+    
+            # Update the in-memory record
+            record["annotator"] = annotator
+            record["label"] = label
+            record["heading"] = heading
+            record["text"] = text
+            record["source"] = source
+            record["source_category"] = source_category
+            record["category"] = category
+            record["multi_category"] = multi_cat
+            record["annotation_confidence"] = str(confidence)
+            record["image_path"] = ";".join(image_rel_paths)
+    
+            self._rewrite_csv()
+        except Exception as e:
+            messagebox.showerror("Update Error", f"Failed to update entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
+            return False
 
-        # Update the in-memory record
-        record["annotator"] = annotator
-        record["label"] = label
-        record["heading"] = heading
-        record["text"] = text
-        record["source"] = source
-        record["source_category"] = source_category
-        record["category"] = category
-        record["multi_category"] = multi_cat
-        record["annotation_confidence"] = str(confidence)
-        record["image_path"] = ";".join(image_rel_paths)
-
-        self._rewrite_csv()
         self._update_stats()
         if show_success:
             messagebox.showinfo("Update Complete",
@@ -1499,8 +1523,14 @@ class AnnotatorTool(ctk.CTk):
         if not confirm:
             return
 
-        self.dataset_records.pop(self.current_review_index)
-        self._rewrite_csv()
+        deleted_record = self.dataset_records.pop(self.current_review_index)
+        try:
+            self._rewrite_csv()
+        except Exception as e:
+            # Revert the deletion in memory since saving failed
+            self.dataset_records.insert(self.current_review_index, deleted_record)
+            messagebox.showerror("Delete Error", f"Failed to delete entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
+            return
         self._update_stats()
 
         if not self.dataset_records:
