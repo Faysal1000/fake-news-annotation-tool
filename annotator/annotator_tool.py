@@ -537,15 +537,37 @@ class AnnotatorTool(ctk.CTk):
                                         border_width=1, border_color="#555")
         self.text_box.pack(fill="x", padx=10, pady=(0, 8))
 
-        # Prevent mouse wheel scrolling in textboxes from bubbling up to the parent scrollable frame
+        # Smart scroll: Prevent mouse wheel from bubbling up to parent UNLESS the textbox is at the top/bottom boundary.
+        def _smart_scroll(event, widget):
+            y_view = widget.yview()
+            is_up = False
+            is_down = False
+            
+            if getattr(event, 'num', 0) == 4:
+                is_up = True
+            elif getattr(event, 'num', 0) == 5:
+                is_down = True
+            elif hasattr(event, 'delta'):
+                if event.delta > 0:
+                    is_up = True
+                elif event.delta < 0:
+                    is_down = True
+                    
+            if is_up and y_view[0] <= 0.0:
+                return None # Propagate to parent
+            if is_down and y_view[1] >= 1.0:
+                return None # Propagate to parent
+                
+            return "break"
+
         def block_scroll(widget):
             tags = list(widget._textbox.bindtags())
             if 'Text' in tags:
                 tags.insert(tags.index('Text') + 1, 'BlockScroll')
                 widget._textbox.bindtags(tuple(tags))
-            widget._textbox.bind_class('BlockScroll', '<MouseWheel>', lambda e: "break")
-            widget._textbox.bind_class('BlockScroll', '<Button-4>', lambda e: "break")
-            widget._textbox.bind_class('BlockScroll', '<Button-5>', lambda e: "break")
+            widget._textbox.bind_class('BlockScroll', '<MouseWheel>', lambda e, w=widget._textbox: _smart_scroll(e, w))
+            widget._textbox.bind_class('BlockScroll', '<Button-4>', lambda e, w=widget._textbox: _smart_scroll(e, w))
+            widget._textbox.bind_class('BlockScroll', '<Button-5>', lambda e, w=widget._textbox: _smart_scroll(e, w))
 
         block_scroll(self.heading_entry)
         block_scroll(self.text_box)
