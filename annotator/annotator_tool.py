@@ -523,6 +523,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.annotator_entry = ctk.CTkEntry(annotator_row, placeholder_text="Your name", height=28)
         self.annotator_entry.pack(side="left", fill="x", expand=True)
 
+        # Load previously saved annotator name if it exists
+        saved_name = load_config()
+        if saved_name:
+            self.annotator_entry.insert(0, saved_name)
+
         # ----- LABEL SELECTION (required) -----
         # Two radio buttons: "Fake" (red) and "Real" (green).
         # Exactly one must be selected before saving.
