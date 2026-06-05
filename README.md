@@ -164,6 +164,32 @@ Keep the folder structure intact so the image paths in the CSV remain valid.
 
 ---
 
+## Aggregating Data from Multiple Annotators
+
+Once multiple annotators have submitted their data, the project lead can easily combine all their work into one master dataset using the `aggregate_datasets.py` script.
+
+1. Create a master folder (e.g., `all_annotators_dataset` inside the `annotator` directory).
+2. Place each annotator's entire folder (containing their `dataset.csv` and `images/` directory) inside this master folder.
+   ```text
+   all_annotators_dataset/
+   ├── Faysal/
+   │   ├── dataset.csv
+   │   └── images/
+   ├── Alice/
+   │   ├── dataset.csv
+   │   └── images/
+   └── Bob/
+       ├── dataset.csv
+       └── images/
+   ```
+3. Run the aggregation script from the terminal:
+   ```bash
+   python annotator/aggregate_datasets.py
+   ```
+4. The script will prompt you for the path to the master folder and the desired output locations (you can just press Enter to accept the defaults). It will automatically merge all CSV files into a single `dataset.csv` and safely copy all images into a unified `images/` folder.
+
+---
+
 ## For Developers
 
 ### Running from source
