@@ -295,6 +295,62 @@ def sanitize_name(name):
 # MAIN APPLICATION CLASS
 # =============================================================================
 
+class FlowFrame(ctk.CTkFrame):
+    """A custom frame that automatically wraps its children to a new line if they exceed the frame's width."""
+    def __init__(self, master, **kwargs):
+        super().__init__(master, **kwargs)
+        self.bind("<Configure>", self._on_configure)
+
+    def _arrange(self):
+        width = self.winfo_width()
+        if width <= 10:  # Skip if frame is not fully drawn yet
+            return
+            
+        rows = []
+        current_row = []
+        x = 0
+        max_height = 0
+        
+        for child in self.winfo_children():
+            cw = child.winfo_reqwidth()
+            ch = child.winfo_reqheight()
+            
+            if x + cw > width and current_row:
+                rows.append((current_row, x - 10, max_height))  # x - 10 to remove trailing spacing
+                current_row = []
+                x = 0
+                max_height = 0
+                
+            current_row.append((child, cw, ch))
+            x += cw + 10  # Horizontal spacing between labels
+            max_height = max(max_height, ch)
+            
+        if current_row:
+            rows.append((current_row, x - 10, max_height))
+            
+        y = 0
+        total_height = 0
+        for row_items, row_width, row_height in rows:
+            start_x = (width - row_width) // 2
+            start_x = max(0, start_x)  # Prevent negative x if width is very small
+            
+            x_offset = start_x
+            for child, cw, ch in row_items:
+                child.place(x=x_offset, y=y)
+                x_offset += cw + 10
+                
+            y += row_height + 5  # Vertical spacing
+            total_height += row_height + 5
+            
+        if total_height > 0:
+            total_height -= 5 # Remove trailing vertical spacing
+            
+        if total_height != self.winfo_reqheight() and total_height > 0:
+            self.configure(height=total_height)
+
+    def _on_configure(self, event=None):
+        self._arrange()
+
 class AnnotatorTool(ctk.CTk, dnd_base):
     """Main GUI application for annotating fake news dataset entries.
     
@@ -411,25 +467,28 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         top_bar.pack(fill="x", pady=(5, 2))
 
         self.mode_switcher = ctk.CTkSegmentedButton(
-            top_bar, values=["📝 Annotate", "🔍 Review"],
+            top_bar, values=["📝 Ann.", "🔍 Rev."],
             command=self._toggle_mode,
             font=ctk.CTkFont(size=10),
             selected_color="#1f6aa5", selected_hover_color="#144870",
-            height=24, width=150
+            height=24, width=100
         )
-        self.mode_switcher.set("📝 Annotate")
+        self.mode_switcher.set("📝 Ann.")
         self.mode_switcher.pack(side="left", padx=(0, 10))
+        
+        # Spacer on the right to perfectly balance the left button, ensuring the title is exactly centered
+        ctk.CTkFrame(top_bar, width=100, height=1, fg_color="transparent").pack(side="right", padx=(10, 0))
 
         ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
 
         # ----- Stats bar: shows total entry count, image count, and label counts -----
-        self.stats_frame = ctk.CTkFrame(main, fg_color="transparent")
-        self.stats_frame.pack(pady=(0, 2))
+        self.stats_frame = FlowFrame(main, fg_color="transparent")
+        self.stats_frame.pack(fill="x", pady=(0, 2))
 
         # ----- Category stats bar: shows news category counts on a second line -----
-        self.category_stats_frame = ctk.CTkFrame(main, fg_color="transparent")
-        self.category_stats_frame.pack(pady=(0, 10))
+        self.category_stats_frame = FlowFrame(main, fg_color="transparent")
+        self.category_stats_frame.pack(fill="x", pady=(0, 10))
 
         # ----- REVIEW NAVIGATION BAR (hidden by default, shown in Review mode) -----
         self.nav_frame = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=6,
@@ -1297,7 +1356,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         """Helper to create interactive stat labels inside a frame."""
         if is_separator:
             lbl = ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=13))
-            lbl.pack(side="left", padx=5)
             return
             
         is_active = (self.current_mode == "review") and (
@@ -1309,7 +1367,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         fnt = ctk.CTkFont(size=13, weight="bold" if is_active else "normal", underline=is_active)
         
         lbl = ctk.CTkLabel(parent, text=text, font=fnt, text_color=color)
-        lbl.pack(side="left")
         
         if filter_key:
             lbl.bind("<Button-1>", lambda e, k=filter_key: self._apply_filter(k))
@@ -1358,7 +1415,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         news_cats = counts["news_categories"]
         if news_cats:
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
-            lbl.pack(side="left", padx=(0, 5))
             
             sorted_cats = sorted(news_cats.items())
             for i, (cat, count) in enumerate(sorted_cats):
@@ -1367,7 +1423,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     self._create_stat_label(self.category_stats_frame, "|", is_separator=True)
         else:
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  No entries yet", font=ctk.CTkFont(size=12), text_color="#aaa")
-            lbl.pack(side="left")
+
+        # Explicitly trigger layout arrangement
+        self.stats_frame.update_idletasks()
+        self.category_stats_frame.update_idletasks()
+        self.stats_frame._arrange()
+        self.category_stats_frame._arrange()
 
 
     # =========================================================================
@@ -1381,11 +1442,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         loads the CSV, and displays the first record.
         When switching to Annotate: restores the saved draft.
         """
-        if "Annotate" in mode_name:
+        if "Ann." in mode_name:
             if self.current_mode == "annotate":
                 return
             if not self._check_unsaved_changes():
-                self.mode_switcher.set("🔍 Review")
+                self.mode_switcher.set("🔍 Rev.")
                 return
             self.current_mode = "annotate"
             self.nav_frame.pack_forget()
@@ -1393,7 +1454,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
             self._restore_draft()
             self._update_stats()
-        elif "Review" in mode_name:
+        elif "Rev." in mode_name:
             if self.current_mode == "review":
                 return
             self._save_draft()
@@ -1755,8 +1816,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         if not self.all_dataset_records:
             messagebox.showinfo("No Records", "All records have been deleted.")
-            self.mode_switcher.set("📝 Annotate")
-            self._toggle_mode("📝 Annotate")
+            self.mode_switcher.set("📝 Ann.")
+            self._toggle_mode("📝 Ann.")
             return
 
     def _rewrite_csv(self):
