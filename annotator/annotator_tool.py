@@ -389,8 +389,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         
         # --- INITIAL WINDOW SIZE SETTINGS ---
         # You can change the initial opening size by modifying these two values:
-        window_width = 800
-        window_height = 750
+        window_width = 760
+        window_height = 880
         
         # Calculate screen center coordinates
         screen_width = self.winfo_screenwidth()
