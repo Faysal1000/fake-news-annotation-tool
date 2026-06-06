@@ -145,9 +145,9 @@ MULTI_CATEGORIES = ["Misinformation", "Rumor", "Clickbait"]
 # SOURCE_CATEGORIES: Predefined platform/medium options for the source category
 # dropdown. This field is required — the annotator must specify where the
 # news item was found or published.
-SOURCE_CATEGORIES = ["", "News Channel", "Newspaper", "Facebook",
-                        "Twitter", "Instagram", "Reddit", "YouTube", "Blog",
-                         "Website", "Miscellaneous"]
+SOURCE_CATEGORIES = ["", "News Channel", "Newspaper", "Facebook", "Tiktok",
+                        "Twitter", "Instagram", "Reddit", "YouTube",
+                         "Blog", "Website", "Miscellaneous"]
 
 # IMAGE_EXTENSIONS: Allowed image file extensions. Only these file types
 # can be browsed, pasted, or dropped into the tool.
