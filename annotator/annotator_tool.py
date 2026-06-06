@@ -1363,6 +1363,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.source_entry.delete(0, "end")         # Clear the source field
         self.notes_entry.delete("0.0", "end")      # Clear additional notes
         self.label_var.set("")                      # Deselect the label radio buttons
+        self._update_label_toggles()                 # Reset Fake/Real button visuals
         self.category_var.set("")                   # Reset category dropdown
         self.source_cat_var.set("")                  # Reset source category dropdown
         self.multi_cat_var.set("")                   # Reset multi-category selection
@@ -1450,6 +1451,21 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if sel_annotators:
                 filtered = [r for r in filtered if (r.get("annotator") or "") in sel_annotators]
 
+            # Filter by content type (Image Only / Text & Image / Text Only)
+            sel_content_types = filt.get("content_types")
+            if sel_content_types:
+                def _content_type(r):
+                    has_text = bool((r.get("text") or "").strip())
+                    has_image = bool((r.get("image_path") or "").strip())
+                    if has_text and has_image:
+                        return "Text & Image"
+                    elif has_image:
+                        return "Image Only"
+                    elif has_text:
+                        return "Text Only"
+                    return ""
+                filtered = [r for r in filtered if _content_type(r) in sel_content_types]
+
             # Filter by confidence interval
             min_conf = filt.get("min_conf")
             max_conf = filt.get("max_conf")
@@ -1498,6 +1514,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if f.get("categories"): count += 1
             if f.get("source_categories"): count += 1
             if f.get("annotators"): count += 1
+            if f.get("content_types"): count += 1
             if f.get("min_conf") is not None or f.get("max_conf") is not None: count += 1
             self.filter_indicator.configure(text=f"⚡ {count} filter(s)")
             self.filter_btn.configure(fg_color="#4a3f00", border_color="#f39c12")
@@ -1593,7 +1610,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                      all_annotators if all_annotators else ["(no data)"],
                                      cur.get("annotators", set()))
 
-        # ── 6. Confidence Interval ──
+        # ── 6. Content Type ──
+        content_type_vars = _checkbox_section(scroll, "Content Type",
+                                              ["Image Only", "Text & Image", "Text Only"],
+                                              cur.get("content_types", set()))
+
+        # ── 7. Confidence Interval ──
         conf_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
                                    border_width=1, border_color="#444")
         conf_frame.pack(fill="x", pady=(6, 2))
@@ -1622,7 +1644,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         btn_container.pack(fill="x", padx=12, pady=(4, 12))
 
         # Collect all checkbox var lists for the clear-all function
-        all_checkbox_vars = label_vars + type_vars + cat_vars + src_cat_vars + ann_vars
+        all_checkbox_vars = label_vars + type_vars + cat_vars + src_cat_vars + ann_vars + content_type_vars
 
         def _clear_selections():
             """Uncheck every checkbox and reset confidence to 0–100 without closing."""
@@ -1640,6 +1662,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             sel_cats = {v for v, var in cat_vars if var.get() and v != "(no data)"}
             sel_src_cats = {v for v, var in src_cat_vars if var.get() and v != "(no data)"}
             sel_annotators = {v for v, var in ann_vars if var.get() and v != "(no data)"}
+            sel_content_types = {v for v, var in content_type_vars if var.get()}
 
             # Parse confidence
             try:
@@ -1658,7 +1681,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             # Check if any filter is actually active
             has_filter = (
                 bool(sel_labels) or bool(sel_types) or bool(sel_cats) or
-                bool(sel_src_cats) or bool(sel_annotators) or mn > 0 or mx < 100
+                bool(sel_src_cats) or bool(sel_annotators) or bool(sel_content_types) or
+                mn > 0 or mx < 100
             )
 
             if has_filter:
@@ -1668,6 +1692,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "categories": sel_cats if sel_cats else None,
                     "source_categories": sel_src_cats if sel_src_cats else None,
                     "annotators": sel_annotators if sel_annotators else None,
+                    "content_types": sel_content_types if sel_content_types else None,
                     "min_conf": mn if mn > 0 else None,
                     "max_conf": mx if mx < 100 else None,
                 }
