@@ -483,8 +483,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self._main_frame = main  # Store reference for responsive layout
 
         # ----- TOP BAR: Mode switcher (left) + Title (center) -----
-        top_bar = ctk.CTkFrame(main, fg_color="transparent")
+        top_bar = ctk.CTkFrame(main, fg_color="transparent", height=38)
         top_bar.pack(fill="x", pady=(5, 2))
+        top_bar.pack_propagate(False)  # keep fixed height for place() centering
 
         self.mode_switcher = ctk.CTkSegmentedButton(
             top_bar, values=["📝 Annotate", "🔍 Review"],
@@ -511,7 +512,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Not packed yet — shown only in Review mode
 
         ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
-                     font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
+                     font=ctk.CTkFont(size=22, weight="bold")).place(relx=0.5, rely=0.5, anchor="center")
 
         # ----- Stats bar: colored badge cards -----
         self.stats_frame = FlowFrame(main, fg_color="transparent")
