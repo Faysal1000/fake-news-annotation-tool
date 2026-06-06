@@ -226,7 +226,8 @@ def get_label_counts():
     """
     result = {"total": 0, "fake": 0, "real": 0,
               "fake_subcategories": {"Misinformation": 0, "Rumor": 0, "Clickbait": 0},
-              "news_categories": {}}
+              "news_categories": {},
+              "only_image": 0, "only_text": 0, "both_text_image": 0}
     if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
         return result
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
@@ -245,6 +246,18 @@ def get_label_counts():
             cat = (row.get("category") or "").strip()
             if cat:
                 result["news_categories"][cat] = result["news_categories"].get(cat, 0) + 1
+            
+            # Content breakdown
+            has_text = bool((row.get("text") or "").strip())
+            image_paths = row.get("image_path") or ""
+            has_image = bool([p for p in image_paths.split(";") if p.strip()])
+            
+            if has_text and has_image:
+                result["both_text_image"] += 1
+            elif has_text and not has_image:
+                result["only_text"] += 1
+            elif not has_text and has_image:
+                result["only_image"] += 1
     return result
 
 
@@ -497,7 +510,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.stats_frame = FlowFrame(main, fg_color="transparent")
         self.stats_frame.pack(fill="x", pady=(0, 2))
 
-        # ----- Category stats bar: shows news category counts on a second line -----
+        # ----- Labels stats bar: shows fake/real and subcategory counts -----
+        self.labels_stats_frame = FlowFrame(main, fg_color="transparent")
+        self.labels_stats_frame.pack(fill="x", pady=(0, 2))
+
+        # ----- Category stats bar: shows news category counts on a third line -----
         self.category_stats_frame = FlowFrame(main, fg_color="transparent")
         self.category_stats_frame.pack(fill="x", pady=(0, 10))
 
@@ -1658,6 +1675,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             sub = {"Misinformation": 0, "Rumor": 0, "Clickbait": 0}
             news_cats = {}
             img_count = 0
+            only_image = 0
+            only_text = 0
+            both_text_image = 0
             for r in records:
                 mc = (r.get("multi_category") or "").strip()
                 if mc in sub:
@@ -1666,8 +1686,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 if cat:
                     news_cats[cat] = news_cats.get(cat, 0) + 1
                 ip = (r.get("image_path") or "").strip()
+                img_list = [p for p in ip.split(";") if p.strip()]
                 if ip:
-                    img_count += len([p for p in ip.split(";") if p.strip()])
+                    img_count += len(img_list)
+                
+                # Content breakdown
+                has_text = bool((r.get("text") or "").strip())
+                has_image = bool(img_list)
+                if has_text and has_image:
+                    both_text_image += 1
+                elif has_text and not has_image:
+                    only_text += 1
+                elif not has_text and has_image:
+                    only_image += 1
             global_total = len(self.all_dataset_records)
         else:
             counts = get_label_counts()
@@ -1677,21 +1708,32 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             real = counts["real"]
             sub = counts["fake_subcategories"]
             news_cats = counts["news_categories"]
+            only_image = counts["only_image"]
+            only_text = counts["only_text"]
+            both_text_image = counts["both_text_image"]
             global_total = None
 
         # Clear existing widgets
         for widget in self.stats_frame.winfo_children():
             widget.destroy()
+        for widget in self.labels_stats_frame.winfo_children():
+            widget.destroy()
         for widget in self.category_stats_frame.winfo_children():
             widget.destroy()
 
-        # Line 1: Total, Images, Fake, Real + subcategory breakdown
+        # Line 1: Total, Images, Only Image, Only Text, Text & Image
         if use_filtered:
             self._create_stat_label(self.stats_frame, f"Filtered: {total} / Total: {global_total}", filter_key="Total")
         else:
             self._create_stat_label(self.stats_frame, f"Total: {total}", filter_key="Total")
         self._create_stat_label(self.stats_frame, "|", is_separator=True)
         self._create_stat_label(self.stats_frame, f"Images: {img_count}", filter_key=None)
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Only Images: {only_image}", filter_key=None)
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Only Text: {only_text}", filter_key=None)
+        self._create_stat_label(self.stats_frame, "|", is_separator=True)
+        self._create_stat_label(self.stats_frame, f"Text & Image: {both_text_image}", filter_key=None)
 
         # Build label/sub items, skipping zeros when filtered
         label_items = []
@@ -1706,20 +1748,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 sub_items.append((name, sub[name]))
 
         if label_items:
-            self._create_stat_label(self.stats_frame, "|", is_separator=True)
             for i, (name, cnt) in enumerate(label_items):
-                self._create_stat_label(self.stats_frame, f"{name}: {cnt}", filter_key=name)
+                self._create_stat_label(self.labels_stats_frame, f"{name}: {cnt}", filter_key=name)
                 if i < len(label_items) - 1:
-                    self._create_stat_label(self.stats_frame, "|", is_separator=True)
+                    self._create_stat_label(self.labels_stats_frame, "|", is_separator=True)
 
         if sub_items:
-            self._create_stat_label(self.stats_frame, "||", is_separator=True)
+            self._create_stat_label(self.labels_stats_frame, "||", is_separator=True)
             for i, (name, cnt) in enumerate(sub_items):
-                self._create_stat_label(self.stats_frame, f"{name}: {cnt}", filter_key=name)
+                self._create_stat_label(self.labels_stats_frame, f"{name}: {cnt}", filter_key=name)
                 if i < len(sub_items) - 1:
-                    self._create_stat_label(self.stats_frame, "|", is_separator=True)
+                    self._create_stat_label(self.labels_stats_frame, "|", is_separator=True)
 
-        # Line 2: News category counts (only non-zero when filtered)
+        # Line 3: News category counts (only non-zero when filtered)
         if news_cats:
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
             
@@ -1733,8 +1774,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # Explicitly trigger layout arrangement
         self.stats_frame.update_idletasks()
+        self.labels_stats_frame.update_idletasks()
         self.category_stats_frame.update_idletasks()
         self.stats_frame._arrange()
+        self.labels_stats_frame._arrange()
         self.category_stats_frame._arrange()
 
 
