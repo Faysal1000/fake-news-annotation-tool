@@ -129,7 +129,8 @@ CONFIG_PATH = SCRIPT_DIR / ".annotator_config.json"
 #                    or "Real" when the label is Real
 # - source_category: Platform/medium where the news was found (required)
 CSV_COLUMNS = ["id", "heading", "text", "image_path", "label", "multi_category",
-               "source", "source_category", "category", "annotator", "annotation_confidence", "timestamp"]
+               "source", "source_category", "category", "annotator", "annotation_confidence",
+               "additional_notes", "timestamp"]
 
 # CATEGORIES: Predefined category options for the dropdown menu.
 # First entry is empty string (no category selected).
@@ -402,8 +403,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         
         # --- INITIAL WINDOW SIZE SETTINGS ---
         # You can change the initial opening size by modifying these two values:
-        window_width = 760
-        window_height = 880
+        window_width = 1200
+        window_height = 850
         
         # Calculate screen center coordinates
         screen_width = self.winfo_screenwidth()
@@ -412,7 +413,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         y_cordinate = int((screen_height / 2) - (window_height / 2))
         
         self.geometry(f"{window_width}x{window_height}+{x_cordinate}+{y_cordinate}")
-        self.minsize(700, 600)
+        self.minsize(900, 650)
+
+        # Track current column layout mode for responsive resizing
+        self._current_layout_mode = None
 
         # Check for updates in the background
         threading.Thread(target=self._check_for_updates, daemon=True).start()
@@ -467,37 +471,40 @@ class AnnotatorTool(ctk.CTk, dnd_base):
     def _build_ui(self):
         """Build the entire GUI layout.
         
-        Creates a scrollable main frame and adds all input sections:
-        annotator name, label selection, category dropdown, source field,
-        text area, image controls, and action buttons.
+        Creates a two-column responsive desktop layout:
+        - Top: stats badge cards (centered)
+        - Left column: heading, text, images
+        - Right column: form controls (annotator, label, categories, etc.)
+        - Bottom: navigation + action buttons
         """
-        # Scrollable container so the UI works on smaller screens
-        main = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        # Main container (no scrolling — desktop-optimized)
+        main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=18, pady=10)
+        self._main_frame = main  # Store reference for responsive layout
 
         # ----- TOP BAR: Mode switcher (left) + Title (center) -----
         top_bar = ctk.CTkFrame(main, fg_color="transparent")
         top_bar.pack(fill="x", pady=(5, 2))
 
         self.mode_switcher = ctk.CTkSegmentedButton(
-            top_bar, values=["📝 Ann.", "🔍 Rev."],
+            top_bar, values=["📝 Annotate", "🔍 Review"],
             command=self._toggle_mode,
-            font=ctk.CTkFont(size=10),
+            font=ctk.CTkFont(size=12),
             selected_color="#1f6aa5", selected_hover_color="#144870",
-            height=24, width=100
+            height=28, width=180
         )
-        self.mode_switcher.set("📝 Ann.")
+        self.mode_switcher.set("📝 Annotate")
         self.mode_switcher.pack(side="left", padx=(0, 10))
         
         # Filter button + indicator on the right (hidden by default, shown in Review mode)
         self.filter_indicator = ctk.CTkLabel(top_bar, text="",
-                                              font=ctk.CTkFont(size=10),
+                                              font=ctk.CTkFont(size=12),
                                               text_color="#f39c12")
         # Not packed yet — shown only in Review mode
         
-        self.filter_btn = ctk.CTkButton(top_bar, text="🔍", command=self._show_filter_popup,
-                                         width=28, height=24,
-                                         font=ctk.CTkFont(size=14),
+        self.filter_btn = ctk.CTkButton(top_bar, text="🔍 Filter", command=self._show_filter_popup,
+                                         width=80, height=32,
+                                         font=ctk.CTkFont(size=13),
                                          fg_color="#2d2d5e", hover_color="#3d3d7e",
                                          border_width=1, border_color="#555",
                                          corner_radius=6)
@@ -506,266 +513,260 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
 
-        # ----- Stats bar: shows total entry count, image count, and label counts -----
+        # ----- Stats bar: colored badge cards -----
         self.stats_frame = FlowFrame(main, fg_color="transparent")
-        self.stats_frame.pack(fill="x", pady=(0, 2))
+        self.stats_frame.pack(fill="x", pady=(4, 2))
 
-        # ----- Labels stats bar: shows fake/real and subcategory counts -----
-        self.labels_stats_frame = FlowFrame(main, fg_color="transparent")
-        self.labels_stats_frame.pack(fill="x", pady=(0, 2))
-
-        # ----- Category stats bar: shows news category counts on a third line -----
+        # ----- Category stats bar: news category counts -----
         self.category_stats_frame = FlowFrame(main, fg_color="transparent")
-        self.category_stats_frame.pack(fill="x", pady=(0, 10))
+        self.category_stats_frame.pack(fill="x", pady=(0, 6))
 
-        # ----- REVIEW NAVIGATION BAR (hidden by default, shown in Review mode) -----
-        self.nav_frame = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=6,
-                                       border_width=1, border_color="#444")
-        self.prev_btn = ctk.CTkButton(self.nav_frame, text="◀ Prev",
-                                       command=self._prev_record, width=80, height=28,
-                                       font=ctk.CTkFont(size=12))
-        self.prev_btn.pack(side="left", padx=8, pady=5)
+        # ----- BOTTOM BAR: Grid layout with 2 equal columns -----
+        self.bottom_bar = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=8,
+                                        border_width=1, border_color="#333")
+        self.bottom_bar.pack(side="bottom", fill="x", pady=(6, 0))
+        self.bottom_bar.columnconfigure(0, weight=1, uniform="btm")  # left half (nav)
+        self.bottom_bar.columnconfigure(1, weight=1, uniform="btm")  # right half (buttons)
 
-        
-        # Center frame for editable record index
+        # Left side: review navigation (hidden by default, placed via grid when needed)
+        self.nav_frame = ctk.CTkFrame(self.bottom_bar, fg_color="transparent")
+        # Not placed yet — shown only in Review mode via grid()
+
+        self.prev_btn = ctk.CTkButton(self.nav_frame, text="← Previous",
+                                       command=self._prev_record, width=100, height=32,
+                                       font=ctk.CTkFont(size=12),
+                                       fg_color="transparent", border_width=1,
+                                       border_color="#555", hover_color="#333")
+        self.prev_btn.pack(side="left", padx=(0, 10))
+
+        # Center: record counter
         self.record_center_frame = ctk.CTkFrame(self.nav_frame, fg_color="transparent")
         self.record_center_frame.pack(side="left", expand=True)
         
-        ctk.CTkLabel(self.record_center_frame, text="Record", font=ctk.CTkFont(size=13)).pack(side="left", padx=(0, 5))
-        
-        self.record_index_entry = ctk.CTkEntry(self.record_center_frame, width=50, height=24, font=ctk.CTkFont(size=13, weight="bold"), justify="center")
+        self.record_index_entry = ctk.CTkEntry(self.record_center_frame, width=50, height=28,
+                                                font=ctk.CTkFont(size=13, weight="bold"), justify="center")
         self.record_index_entry.pack(side="left")
         self.record_index_entry.bind("<Return>", self._jump_to_record)
         
-        self.record_total_label = ctk.CTkLabel(self.record_center_frame, text="of 0", font=ctk.CTkFont(size=13))
-        self.record_total_label.pack(side="left", padx=(5, 0))
-        self.next_btn = ctk.CTkButton(self.nav_frame, text="Next ▶",
-                                       command=self._next_record, width=80, height=28,
-                                       font=ctk.CTkFont(size=12))
-        self.next_btn.pack(side="right", padx=8, pady=5)
+        self.record_total_label = ctk.CTkLabel(self.record_center_frame, text="/ 0",
+                                                font=ctk.CTkFont(size=13), text_color="#aaa")
+        self.record_total_label.pack(side="left", padx=(4, 0))
 
-        # ----- ANNOTATOR NAME FIELD -----
-        annotator_row = ctk.CTkFrame(main, fg_color="transparent")
-        annotator_row.pack(fill="x", padx=10, pady=(10, 8))
+        self.next_btn = ctk.CTkButton(self.nav_frame, text="Next →",
+                                       command=self._next_record, width=100, height=32,
+                                       font=ctk.CTkFont(size=12),
+                                       fg_color="#1f6aa5", hover_color="#144870")
+        self.next_btn.pack(side="left", padx=(10, 0))
 
-        self._inline_label(annotator_row, "Annotator name *")
-        self.annotator_entry = ctk.CTkEntry(annotator_row, placeholder_text="Your name", height=28)
-        self.annotator_entry.pack(side="left", fill="x", expand=True)
+        # Action buttons — always in right column only
+        self.action_btn_frame = ctk.CTkFrame(self.bottom_bar, fg_color="transparent")
+        self.action_btn_frame.grid(row=0, column=1, sticky="ew", padx=(8, 8), pady=6)
 
-        # Load previously saved annotator name if it exists
+        self.primary_btn = ctk.CTkButton(self.action_btn_frame, text="💾  Save Entry",
+                       command=self._save_entry,
+                       height=38, font=ctk.CTkFont(size=14, weight="bold"),
+                       fg_color="#2ecc71", hover_color="#27ae60",
+                       text_color="black")
+        self.primary_btn.pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        self.secondary_btn = ctk.CTkButton(self.action_btn_frame, text="🗑  Clear All",
+                       command=self._clear_all,
+                       height=38, width=130, font=ctk.CTkFont(size=14),
+                       fg_color="#444", hover_color="#555",
+                       border_width=1, border_color="#666")
+        self.secondary_btn.pack(side="left")
+
+        # =====================================================================
+        # TWO-COLUMN CONTENT AREA (fills remaining space between stats & bottom)
+        # =====================================================================
+        self.content_container = ctk.CTkFrame(main, fg_color="transparent")
+        self.content_container.pack(fill="both", expand=True, pady=(4, 0))
+
+        # --- LEFT COLUMN: Heading + Text + Images ---
+        self.left_col = ctk.CTkFrame(self.content_container, fg_color="transparent")
+
+        # News Heading
+        self._section(self.left_col, "News Heading (optional)")
+        self.heading_entry = ctk.CTkTextbox(self.left_col, height=55, font=ctk.CTkFont(size=13),
+                                            border_width=1, border_color="#555")
+        self.heading_entry.pack(fill="x", padx=10, pady=(0, 6))
+
+        # News Text
+        self._section(self.left_col, "📝 News Text (required if no image)")
+        self.text_box = ctk.CTkTextbox(self.left_col, height=120, font=ctk.CTkFont(size=13),
+                                        border_width=1, border_color="#555")
+        self.text_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+        # Image section
+        self._section(self.left_col, "🖼️ Images (required if no text)")
+        img_btn_frame = ctk.CTkFrame(self.left_col, fg_color="transparent")
+        img_btn_frame.pack(fill="x", padx=10, pady=(0, 4))
+
+        ctk.CTkButton(img_btn_frame, text="📁 Browse", command=self._browse_image,
+                       width=100, height=26, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(img_btn_frame, text="📋 Paste", command=self._paste_image,
+                       width=100, height=26, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(img_btn_frame, text="❌ Remove All", command=self._remove_all_images,
+                       width=110, height=26, font=ctk.CTkFont(size=12),
+                       fg_color="#e74c3c", hover_color="#c0392b").pack(side="left")
+
+        # Drag and drop zone / image preview area
+        self.drop_frame = ctk.CTkFrame(self.left_col, height=80, border_width=2,
+                                        border_color="#666", fg_color="#1a1a2e")
+        self.drop_frame.pack(fill="both", padx=10, pady=(4, 6))
+
+        self.drop_label = ctk.CTkLabel(self.drop_frame,
+                                        text="📥 Drag & Drop image(s) here\nor use Browse / Paste buttons above",
+                                        font=ctk.CTkFont(size=13), text_color="#888")
+        self.drop_label.pack(expand=True, fill="both", pady=15)
+
+        # --- RIGHT COLUMN: Form controls ---
+        self.right_col = ctk.CTkFrame(self.content_container, fg_color="#1a1a2e",
+                                       corner_radius=10, border_width=1, border_color="#333")
+
+        # Annotator name
+        self._section(self.right_col, "Annotator name *")
+        self.annotator_entry = ctk.CTkEntry(self.right_col, placeholder_text="Your name", height=32)
+        self.annotator_entry.pack(fill="x", padx=12, pady=(0, 8))
+
         saved_name = load_config()
         if saved_name:
             self.annotator_entry.insert(0, saved_name)
 
-        # ----- LABEL SELECTION (required) -----
-        # Two radio buttons: "Fake" (red) and "Real" (green).
-        # Exactly one must be selected before saving.
-        # A trace is attached to label_var so that selecting a label
-        # dynamically shows/hides the multi-category sub-classification.
-        label_frame = ctk.CTkFrame(main, fg_color="transparent")
-        label_frame.pack(fill="x", padx=10, pady=(10, 8))
-        self._inline_label(label_frame, "News Label *")
-        self.label_var = ctk.StringVar(value="")  # Empty = nothing selected yet
-        self.radio_fake = ctk.CTkRadioButton(label_frame, text="Fake", variable=self.label_var,
-                                              value="Fake", font=ctk.CTkFont(size=14),
-                                              fg_color="#e74c3c", hover_color="#c0392b",
-                                              command=self._on_label_change)
-        self.radio_fake.pack(side="left", padx=(0, 30))
-        self.radio_real = ctk.CTkRadioButton(label_frame, text="Real", variable=self.label_var,
-                                              value="Real", font=ctk.CTkFont(size=14),
-                                              fg_color="#2ecc71", hover_color="#27ae60",
-                                              command=self._on_label_change)
-        self.radio_real.pack(side="left")
-        
-        self.confidence_entry = ctk.CTkEntry(label_frame, placeholder_text="100", width=80, height=28)
-        self.confidence_entry.pack(side="right")
-        self.confidence_entry.insert(0, "100")
-        
-        ctk.CTkLabel(label_frame, text="Confidence %",
-                     font=ctk.CTkFont(size=13)).pack(side="right", padx=(0, 10))
+        # News Label (Fake / Real) — toggle-style buttons
+        self._section(self.right_col, "News Authenticity *")
+        label_frame = ctk.CTkFrame(self.right_col, fg_color="transparent")
+        label_frame.pack(fill="x", padx=12, pady=(0, 6))
 
-        # ----- MULTI-CATEGORY SUB-CLASSIFICATION -----
-        # This section is only visible when the label is "Fake".
-        # The annotator must pick exactly one sub-type: Misinformation, Rumor,
-        # or Clickbait to describe the nature of the fake news.
-        # When the label is "Real", this section is hidden and the
-        # multi_category column is automatically set to "Real" on save.
-        self.multi_cat_frame = ctk.CTkFrame(main, fg_color="#1a1a2e",
+        self.label_var = ctk.StringVar(value="")
+
+        # Fake toggle button (left half)
+        self.fake_toggle_btn = ctk.CTkButton(
+            label_frame, text="❌  FAKE",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=40, corner_radius=8,
+            fg_color="transparent", hover_color="#4a1a1a",
+            border_width=2, border_color="#555",
+            text_color="#888",
+            command=lambda: self._set_label("Fake")
+        )
+        self.fake_toggle_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+
+        # Real toggle button (right half)
+        self.real_toggle_btn = ctk.CTkButton(
+            label_frame, text="✅  REAL",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            height=40, corner_radius=8,
+            fg_color="transparent", hover_color="#1a4a1a",
+            border_width=2, border_color="#555",
+            text_color="#888",
+            command=lambda: self._set_label("Real")
+        )
+        self.real_toggle_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+
+        # Multi-category sub-classification (shown only for Fake)
+        self.multi_cat_frame = ctk.CTkFrame(self.right_col, fg_color="#222244",
                                              corner_radius=8, border_width=1,
                                              border_color="#444")
-        # Initially hidden — will be shown by _on_label_change when "Fake" is selected
-        self.multi_cat_var = ctk.StringVar(value="")  # Empty = nothing selected yet
-        # Ensure it aligns perfectly with the other inline labels by fixing the label width
-        header_frame = ctk.CTkFrame(self.multi_cat_frame, width=140, height=28, fg_color="transparent")
-        header_frame.pack_propagate(False) # Force width to 140
-        header_frame.pack(side="left", padx=(10, 10), pady=(10, 10))
-        
-        ctk.CTkLabel(header_frame, text="⚠️ Fake News Type",
-                     font=ctk.CTkFont(size=13, weight="bold"),
+        # Initially hidden
+        self.multi_cat_var = ctk.StringVar(value="")
+
+        mc_header = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
+        mc_header.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkLabel(mc_header, text="⚠️ Fake News Type",
+                     font=ctk.CTkFont(size=12, weight="bold"),
                      text_color="#f39c12").pack(side="left", padx=(0, 2))
-        ctk.CTkLabel(header_frame, text="*",
-                     font=ctk.CTkFont(size=13, weight="bold"),
+        ctk.CTkLabel(mc_header, text="*",
+                     font=ctk.CTkFont(size=12, weight="bold"),
                      text_color="#e74c3c").pack(side="left")
 
-        # Each sub-type has its own colour to aid quick visual identification
+        mc_radios = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
+        mc_radios.pack(fill="x", padx=10, pady=(0, 8))
+
         self.radio_misinfo = ctk.CTkRadioButton(
-            self.multi_cat_frame, text="Misinformation", variable=self.multi_cat_var,
-            value="Misinformation", font=ctk.CTkFont(size=13),
+            mc_radios, text="Misinformation", variable=self.multi_cat_var,
+            value="Misinformation", font=ctk.CTkFont(size=12),
             fg_color="#e67e22", hover_color="#d35400")
-        self.radio_misinfo.pack(side="left", padx=(0, 20), pady=(10, 10))
+        self.radio_misinfo.pack(side="left", padx=(0, 12))
         
         self.radio_rumor = ctk.CTkRadioButton(
-            self.multi_cat_frame, text="Rumor", variable=self.multi_cat_var,
-            value="Rumor", font=ctk.CTkFont(size=13),
+            mc_radios, text="Rumor", variable=self.multi_cat_var,
+            value="Rumor", font=ctk.CTkFont(size=12),
             fg_color="#9b59b6", hover_color="#8e44ad")
-        self.radio_rumor.pack(side="left", padx=(0, 20), pady=(10, 10))
+        self.radio_rumor.pack(side="left", padx=(0, 12))
         
         self.radio_clickbait = ctk.CTkRadioButton(
-            self.multi_cat_frame, text="Clickbait", variable=self.multi_cat_var,
-            value="Clickbait", font=ctk.CTkFont(size=13),
+            mc_radios, text="Clickbait", variable=self.multi_cat_var,
+            value="Clickbait", font=ctk.CTkFont(size=12),
             fg_color="#e74c3c", hover_color="#c0392b")
-        self.radio_clickbait.pack(side="left", pady=(10, 10))
+        self.radio_clickbait.pack(side="left")
 
-        # ----- NEWS CATEGORY & SOURCE CATEGORY (both required) -----
-        # Placed side by side on the same row to save vertical space.
-        # News Category: topic of the news (Politics, Health, etc.)
-        # Source Category: platform/medium where the news was found
-        cat_row = ctk.CTkFrame(main, fg_color="transparent")
-        cat_row.pack(fill="x", padx=10, pady=(10, 8))
-        # Left side: News Category dropdown
-        self._inline_label(cat_row, "News Category *")
-        self.category_var = ctk.StringVar(value="")  # Empty = no category
+        # News Category + Source Category (side by side on one row)
+        cat_row_header = ctk.CTkFrame(self.right_col, fg_color="transparent")
+        cat_row_header.pack(fill="x", padx=10, pady=(10, 3))
+        cat_row_header.columnconfigure(0, weight=1, uniform="catcol")
+        cat_row_header.columnconfigure(1, weight=1, uniform="catcol")
+
+        # News Category label
+        nc_lbl_frame = ctk.CTkFrame(cat_row_header, fg_color="transparent")
+        nc_lbl_frame.grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(nc_lbl_frame, text="News Category",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
+        ctk.CTkLabel(nc_lbl_frame, text=" *",
+                     font=ctk.CTkFont(size=15, weight="bold"), text_color="#e74c3c").pack(side="left")
+
+        # Source Category label
+        sc_lbl_frame = ctk.CTkFrame(cat_row_header, fg_color="transparent")
+        sc_lbl_frame.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ctk.CTkLabel(sc_lbl_frame, text="Source Category",
+                     font=ctk.CTkFont(size=15, weight="bold")).pack(side="left")
+        ctk.CTkLabel(sc_lbl_frame, text=" *",
+                     font=ctk.CTkFont(size=15, weight="bold"), text_color="#e74c3c").pack(side="left")
+
+        # Dropdown row
+        cat_row = ctk.CTkFrame(self.right_col, fg_color="transparent")
+        cat_row.pack(fill="x", padx=12, pady=(0, 8))
+        cat_row.columnconfigure(0, weight=1, uniform="catdrop")
+        cat_row.columnconfigure(1, weight=1, uniform="catdrop")
+
+        self.category_var = ctk.StringVar(value="")
         self.category_menu = ctk.CTkOptionMenu(cat_row, variable=self.category_var,
-                                                values=CATEGORIES, height=28)
-        self.category_menu.pack(side="left", fill="x", expand=True)
-        
-        # Spacer
-        ctk.CTkFrame(cat_row, width=30, height=28, fg_color="transparent").pack(side="left")
-        
-        # Right side: Source Category dropdown
-        self._inline_label(cat_row, "Source Category *")
-        self.source_cat_var = ctk.StringVar(value="")  # Empty = nothing selected
+                                                values=CATEGORIES, height=32,
+                                                dynamic_resizing=False)
+        self.category_menu.grid(row=0, column=0, sticky="ew", padx=(0, 4))
+
+        self.source_cat_var = ctk.StringVar(value="")
         self.source_cat_menu = ctk.CTkOptionMenu(cat_row, variable=self.source_cat_var,
-                                                  values=SOURCE_CATEGORIES, height=28)
-        self.source_cat_menu.pack(side="left", fill="x", expand=True)
+                                                  values=SOURCE_CATEGORIES, height=32,
+                                                  dynamic_resizing=False)
+        self.source_cat_menu.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        # ----- SOURCE LINK FIELD (optional) -----
-        source_row = ctk.CTkFrame(main, fg_color="transparent")
-        source_row.pack(fill="x", padx=10, pady=(10, 8))
+        # Confidence (full width)
+        self._section(self.right_col, "Confidence (%)")
+        self.confidence_entry = ctk.CTkEntry(self.right_col, placeholder_text="100", height=32, justify="center")
+        self.confidence_entry.pack(fill="x", padx=12, pady=(0, 8))
+        self.confidence_entry.insert(0, "100")
 
-        self._inline_label(source_row, "Source Link")
-        self.source_entry = ctk.CTkEntry(source_row, placeholder_text="Paste URL or link here", height=28)
-        self.source_entry.pack(side="left", fill="x", expand=True)
+        # Source Link (single line)
+        self._section(self.right_col, "Source Link")
+        self.source_entry = ctk.CTkEntry(self.right_col, placeholder_text="Paste URL or link here", height=32)
+        self.source_entry.pack(fill="x", padx=12, pady=(0, 8))
 
-        # ----- NEWS HEADING FIELD (optional) -----
-        # Placed as a separate section with a label above and 2-line input box below.
-        self._section(main, "News Heading (optional)")
-        self.heading_entry = ctk.CTkTextbox(main, height=55, font=ctk.CTkFont(size=13),
-                                            border_width=1, border_color="#555")
-        self.heading_entry.pack(fill="x", padx=10, pady=(0, 8))
-
-        # ----- TEXT INPUT AREA -----
-        # Large multiline text box for the news content.
-        # Required if no image is provided. A warning shows if under 10 words.
-        self._section(main, "📝 News Text (required if no image)")
-        self.text_box = ctk.CTkTextbox(main, height=160, font=ctk.CTkFont(size=13),
-                                        border_width=1, border_color="#555")
-        self.text_box.pack(fill="x", padx=10, pady=(0, 8))
-
-        # Smart scroll: Prevent mouse wheel from bubbling up to parent UNLESS the textbox is at the top/bottom boundary.
-        def _smart_scroll(event, widget):
-            y_view = widget.yview()
-            is_up = False
-            is_down = False
-            
-            if getattr(event, 'num', 0) == 4:
-                is_up = True
-            elif getattr(event, 'num', 0) == 5:
-                is_down = True
-            elif hasattr(event, 'delta'):
-                if event.delta > 0:
-                    is_up = True
-                elif event.delta < 0:
-                    is_down = True
-                    
-            if is_up and y_view[0] <= 0.0:
-                return None # Propagate to parent
-            if is_down and y_view[1] >= 1.0:
-                return None # Propagate to parent
-                
-            return "break"
-
-        def block_scroll(widget):
-            tags = list(widget._textbox.bindtags())
-            if 'Text' in tags:
-                tags.insert(tags.index('Text') + 1, 'BlockScroll')
-                widget._textbox.bindtags(tuple(tags))
-            widget._textbox.bind_class('BlockScroll', '<MouseWheel>', lambda e, w=widget._textbox: _smart_scroll(e, w))
-            widget._textbox.bind_class('BlockScroll', '<Button-4>', lambda e, w=widget._textbox: _smart_scroll(e, w))
-            widget._textbox.bind_class('BlockScroll', '<Button-5>', lambda e, w=widget._textbox: _smart_scroll(e, w))
-
-        block_scroll(self.heading_entry)
-        block_scroll(self.text_box)
-
-        # ----- IMAGE INPUT SECTION -----
-        # Supports three ways to add images:
-        #   1. Browse button: opens a file dialog (multi-select enabled)
-        #   2. Paste button: grabs image from system clipboard
-        #   3. Drag-and-drop zone: drop image files directly (set up separately)
-        # Multiple images can be added for a single entry.
-        self._section(main, "🖼️ Images (required if no text) — multiple allowed")
-        img_btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        img_btn_frame.pack(fill="x", padx=10, pady=(0, 4))
-
-        # Browse button - opens native file picker filtered to image types only
-        ctk.CTkButton(img_btn_frame, text="📁 Browse Images", command=self._browse_image,
-                       width=130, height=28).pack(side="left", padx=(0, 10))
-        # Paste button - grabs image from clipboard (screenshot, copied image, etc.)
-        ctk.CTkButton(img_btn_frame, text="📋 Paste from Clipboard", command=self._paste_image,
-                       width=160, height=28).pack(side="left", padx=(0, 10))
-        # Remove all button - clears all attached images at once
-        ctk.CTkButton(img_btn_frame, text="❌ Remove All Images", command=self._remove_all_images,
-                       width=140, height=28, fg_color="#e74c3c",
-                       hover_color="#c0392b").pack(side="left")
-
-        # ----- DRAG AND DROP ZONE / IMAGE PREVIEW AREA -----
-        # This box serves dual purpose:
-        #   - When empty: shows drag-and-drop hint text
-        #   - When images are added: shows thumbnail grid inside the box
-        # The box expands dynamically to fit the thumbnails.
-        self.drop_frame = ctk.CTkFrame(main, height=100, border_width=2,
-                                        border_color="#666", fg_color="#1a1a2e")
-        self.drop_frame.pack(fill="x", padx=10, pady=(4, 8))
-
-        # Hint label shown when no images are selected
-        self.drop_label = ctk.CTkLabel(self.drop_frame,
-                                        text="📥 Drag & Drop image(s) here\nor use Browse / Paste buttons above",
-                                        font=ctk.CTkFont(size=14), text_color="#888")
-        self.drop_label.pack(expand=True, fill="both", pady=20)
+        # Additional Notes (expandable, fills remaining space)
+        self._section(self.right_col, "Additional Notes")
+        notes_hint = ctk.CTkLabel(self.right_col, text="For annotator use only — e.g., personal notes or remarks outside of classification",
+                                   font=ctk.CTkFont(size=10, slant="italic"), text_color="#666")
+        notes_hint.pack(fill="x", padx=12, pady=(0, 2))
+        self.notes_entry = ctk.CTkTextbox(self.right_col, font=ctk.CTkFont(size=13),
+                                           border_width=1, border_color="#555")
+        self.notes_entry.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
 
-
-        # ----- ACTION BUTTONS (Annotate Mode) -----
-        self.annotate_btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
-        ctk.CTkButton(self.annotate_btn_frame, text="💾  Save Entry", command=self._save_entry,
-                       height=44, font=ctk.CTkFont(size=16, weight="bold"),
-                       fg_color="#2ecc71", hover_color="#27ae60",
-                       text_color="black").pack(side="left", expand=True, fill="x", padx=(0, 10))
-        ctk.CTkButton(self.annotate_btn_frame, text="🗑️  Clear All", command=self._clear_all,
-                       height=44, width=180, font=ctk.CTkFont(size=16, weight="bold"),
-                       fg_color="#555", hover_color="#777").pack(side="left")
-
-        # ----- ACTION BUTTONS (Review Mode, hidden by default) -----
-        self.review_btn_frame = ctk.CTkFrame(main, fg_color="transparent")
-        # Not packed yet — shown only when the user switches to Review mode
-        ctk.CTkButton(self.review_btn_frame, text="💾  Update Entry", command=self._update_entry,
-                       height=44, font=ctk.CTkFont(size=16, weight="bold"),
-                       fg_color="#3498db", hover_color="#2980b9",
-                       text_color="white").pack(side="left", expand=True, fill="x", padx=(0, 10))
-        ctk.CTkButton(self.review_btn_frame, text="🗑️  Delete Entry", command=self._delete_entry,
-                       height=44, width=180, font=ctk.CTkFont(size=16, weight="bold"),
-                       fg_color="#e74c3c", hover_color="#c0392b").pack(side="left")
+        # =====================================================================
+        # RESPONSIVE LAYOUT: Arrange columns based on window width
+        # =====================================================================
+        self._arrange_columns()
+        self.content_container.bind("<Configure>", self._on_content_resize)
 
         # ----- STATUS BAR (REMOVED) -----
         class DummyLabel:
@@ -805,26 +806,86 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             ctk.CTkLabel(frame, text=text, font=ctk.CTkFont(size=13)).pack(side="left")
 
     # =========================================================================
+    # TWO-COLUMN LAYOUT
+    # =========================================================================
+
+    def _arrange_columns(self):
+        """Arrange the left and right columns in a fixed two-column grid layout."""
+        self.content_container.columnconfigure(0, weight=1, uniform="col")
+        self.content_container.columnconfigure(1, weight=1, uniform="col")
+        self.content_container.rowconfigure(0, weight=1)
+
+        self.left_col.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        self.right_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+
+    def _on_content_resize(self, event=None):
+        """No-op: layout is always two columns."""
+        pass
+
+    # =========================================================================
     # LABEL CHANGE HANDLER
     # =========================================================================
+
+    def _set_label(self, value):
+        """Set the label value and update toggle button visuals.
+        
+        Called when the user clicks the FAKE or REAL toggle button.
+        Updates the button styling to show which is selected.
+        """
+        self.label_var.set(value)
+        self._update_label_toggles()
+        self._on_label_change()
+
+    def _update_label_toggles(self):
+        """Update the visual state of the Fake/Real toggle buttons."""
+        selected = self.label_var.get()
+        if selected == "Fake":
+            self.fake_toggle_btn.configure(
+                fg_color="#4a1a1a", border_color="#e74c3c",
+                text_color="#e74c3c"
+            )
+            self.real_toggle_btn.configure(
+                fg_color="transparent", border_color="#555",
+                text_color="#888"
+            )
+        elif selected == "Real":
+            self.real_toggle_btn.configure(
+                fg_color="#1a4a1a", border_color="#2ecc71",
+                text_color="#2ecc71"
+            )
+            self.fake_toggle_btn.configure(
+                fg_color="transparent", border_color="#555",
+                text_color="#888"
+            )
+        else:
+            # Neither selected — reset both
+            self.fake_toggle_btn.configure(
+                fg_color="transparent", border_color="#555",
+                text_color="#888"
+            )
+            self.real_toggle_btn.configure(
+                fg_color="transparent", border_color="#555",
+                text_color="#888"
+            )
 
     def _on_label_change(self):
         """Show or hide the multi-category panel based on the selected label.
         
-        Called whenever the user clicks a label radio button (Fake or Real).
+        Called whenever the user clicks a label toggle button (Fake or Real).
         - If "Fake" is selected: the multi-category frame is shown so the
           annotator can pick a fake news sub-type (Misinformation/Rumor/Clickbait).
         - If "Real" is selected: the multi-category frame is hidden and the
           multi_cat_var is cleared (multi_category will be set to "Real" on save).
         """
         if self.label_var.get() == "Fake":
-            # Show the multi-category sub-classification panel
-            self.multi_cat_frame.pack(fill="x", padx=10, pady=(0, 8),
-                                       after=self.radio_fake.master)
+            # Show the multi-category sub-classification panel after the label frame
+            self.multi_cat_frame.pack(fill="x", padx=12, pady=(0, 8),
+                                       after=self.fake_toggle_btn.master)
         else:
             # Hide the panel and reset the selection
             self.multi_cat_frame.pack_forget()
             self.multi_cat_var.set("")
+        self._update_label_toggles()
 
     # =========================================================================
     # DRAG AND DROP SUPPORT
@@ -1264,6 +1325,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "category": category,
                     "annotator": annotator,
                     "annotation_confidence": confidence,
+                    "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
                     "timestamp": datetime.now().isoformat(),
                 })
         except Exception as e:
@@ -1298,6 +1360,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.text_box.delete("1.0", "end")       # Clear the text area
         self.heading_entry.delete("1.0", "end")       # Clear the heading field
         self.source_entry.delete(0, "end")         # Clear the source field
+        self.notes_entry.delete("0.0", "end")      # Clear additional notes
         self.label_var.set("")                      # Deselect the label radio buttons
         self.category_var.set("")                   # Reset category dropdown
         self.source_cat_var.set("")                  # Reset source category dropdown
@@ -1459,7 +1522,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         popup.resizable(True, True)
 
         # Size and center the popup
-        pw, ph = 480, 620
+        pw, ph = 600, 580
         popup.geometry(f"{pw}x{ph}")
         popup.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() // 2) - (pw // 2)
@@ -1497,7 +1560,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 cb = ctk.CTkCheckBox(row_frame, text=opt, variable=var,
                                       font=ctk.CTkFont(size=12),
                                       height=24, checkbox_width=18, checkbox_height=18)
-                cb.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 16), pady=2)
+                cb.grid(row=i // 4, column=i % 4, sticky="w", padx=(0, 12), pady=2)
                 vars_list.append((opt, var))
             return vars_list
 
@@ -1645,6 +1708,33 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                        fg_color="transparent", border_width=1,
                        border_color="#555", width=130).pack(side="left")
 
+    def _create_stat_badge(self, parent, label, count, dot_color="#888"):
+        """Create a colored badge card for the stats bar.
+        
+        Each badge shows a colored dot, a bold count number, and a label.
+        """
+        badge = ctk.CTkFrame(parent, fg_color="#1e1e3a", corner_radius=8,
+                              border_width=1, border_color="#333")
+        
+        inner = ctk.CTkFrame(badge, fg_color="transparent")
+        inner.pack(padx=10, pady=6)
+        
+        # Colored dot
+        dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5,
+                            fg_color=dot_color)
+        dot.pack(side="left", padx=(0, 6))
+        dot.pack_propagate(False)
+        
+        # Count number (bold)
+        ctk.CTkLabel(inner, text=str(count),
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color="#ffffff").pack(side="left", padx=(0, 6))
+        
+        # Label text (smaller)
+        ctk.CTkLabel(inner, text=label,
+                     font=ctk.CTkFont(size=11),
+                     text_color="#aaa").pack(side="left")
+
     def _create_stat_label(self, parent, text, filter_key=None, is_separator=False):
         """Helper to create stat labels inside a frame (display only, no click filtering)."""
         if is_separator:
@@ -1656,7 +1746,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         lbl = ctk.CTkLabel(parent, text=text, font=fnt, text_color=color)
 
     def _update_stats(self):
-        """Refresh the stats bar at the top of the UI.
+        """Refresh the stats bar at the top of the UI with colored badge cards.
         
         In Review mode with a filter active, shows counts from the filtered
         subset. Otherwise shows global counts from the CSV.
@@ -1716,51 +1806,40 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Clear existing widgets
         for widget in self.stats_frame.winfo_children():
             widget.destroy()
-        for widget in self.labels_stats_frame.winfo_children():
-            widget.destroy()
         for widget in self.category_stats_frame.winfo_children():
             widget.destroy()
 
-        # Line 1: Total, Images, Only Image, Only Text, Text & Image
+        # Badge cards — each stat gets a colored badge
+        # Total entries
         if use_filtered:
-            self._create_stat_label(self.stats_frame, f"Filtered: {total} / Total: {global_total}", filter_key="Total")
+            self._create_stat_badge(self.stats_frame, f"Filtered / {global_total}", total, "#3498db")
         else:
-            self._create_stat_label(self.stats_frame, f"Total: {total}", filter_key="Total")
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Images: {img_count}", filter_key=None)
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Only Images: {only_image}", filter_key=None)
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Only Text: {only_text}", filter_key=None)
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Text & Image: {both_text_image}", filter_key=None)
-
-        # Build label/sub items, skipping zeros when filtered
-        label_items = []
+            self._create_stat_badge(self.stats_frame, "Total", total, "#3498db")
+        
+        # Label counts (skip zeros when filtered)
         if not use_filtered or fake > 0:
-            label_items.append(("Fake", fake))
+            self._create_stat_badge(self.stats_frame, "Fake", fake, "#e74c3c")
         if not use_filtered or real > 0:
-            label_items.append(("Real", real))
+            self._create_stat_badge(self.stats_frame, "Real", real, "#2ecc71")
+        
+        # Subcategory counts
+        if not use_filtered or sub["Misinformation"] > 0:
+            self._create_stat_badge(self.stats_frame, "Misinfo", sub["Misinformation"], "#e67e22")
+        if not use_filtered or sub["Rumor"] > 0:
+            self._create_stat_badge(self.stats_frame, "Rumor", sub["Rumor"], "#9b59b6")
+        if not use_filtered or sub["Clickbait"] > 0:
+            self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
+        
+        # Content breakdown
+        self._create_stat_badge(self.stats_frame, "Images", img_count, "#1abc9c")
+        if not use_filtered or only_text > 0:
+            self._create_stat_badge(self.stats_frame, "Text Only", only_text, "#34495e")
+        if not use_filtered or both_text_image > 0:
+            self._create_stat_badge(self.stats_frame, "Text & Img", both_text_image, "#16a085")
+        if not use_filtered or only_image > 0:
+            self._create_stat_badge(self.stats_frame, "Img Only", only_image, "#2c3e50")
 
-        sub_items = []
-        for name in ("Misinformation", "Rumor", "Clickbait"):
-            if not use_filtered or sub[name] > 0:
-                sub_items.append((name, sub[name]))
-
-        if label_items:
-            for i, (name, cnt) in enumerate(label_items):
-                self._create_stat_label(self.labels_stats_frame, f"{name}: {cnt}", filter_key=name)
-                if i < len(label_items) - 1:
-                    self._create_stat_label(self.labels_stats_frame, "|", is_separator=True)
-
-        if sub_items:
-            self._create_stat_label(self.labels_stats_frame, "||", is_separator=True)
-            for i, (name, cnt) in enumerate(sub_items):
-                self._create_stat_label(self.labels_stats_frame, f"{name}: {cnt}", filter_key=name)
-                if i < len(sub_items) - 1:
-                    self._create_stat_label(self.labels_stats_frame, "|", is_separator=True)
-
-        # Line 3: News category counts (only non-zero when filtered)
+        # Category stats line
         if news_cats:
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
             
@@ -1774,10 +1853,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # Explicitly trigger layout arrangement
         self.stats_frame.update_idletasks()
-        self.labels_stats_frame.update_idletasks()
         self.category_stats_frame.update_idletasks()
         self.stats_frame._arrange()
-        self.labels_stats_frame._arrange()
         self.category_stats_frame._arrange()
 
 
@@ -1792,21 +1869,23 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         loads the CSV, and displays the first record.
         When switching to Annotate: restores the saved draft.
         """
-        if "Ann." in mode_name:
+        if "Annotate" in mode_name:
             if self.current_mode == "annotate":
                 return
             if not self._check_unsaved_changes():
-                self.mode_switcher.set("🔍 Rev.")
+                self.mode_switcher.set("🔍 Review")
                 return
             self.current_mode = "annotate"
-            self.nav_frame.pack_forget()
-            self.review_btn_frame.pack_forget()
+            self.nav_frame.grid_forget()
             self.filter_btn.pack_forget()
             self.filter_indicator.pack_forget()
-            self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
+            # Swap buttons to Annotate mode
+            self.primary_btn.configure(text="💾  Save Entry", command=self._save_entry)
+            self.secondary_btn.configure(text="🗑  Clear All", command=self._clear_all,
+                                          fg_color="#444", hover_color="#555")
             self._restore_draft()
             self._update_stats()
-        elif "Rev." in mode_name:
+        elif "Review" in mode_name:
             if self.current_mode == "review":
                 return
             self._save_draft()
@@ -1820,10 +1899,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 self._restore_draft()
                 self._update_stats()
                 return
-            self.annotate_btn_frame.pack_forget()
-            self.review_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
-            self.nav_frame.pack(fill="x", padx=10, pady=(5, 15),
-                                after=self.review_btn_frame)
+            # Swap buttons to Review mode
+            self.primary_btn.configure(text="💾  Update Entry", command=self._update_entry)
+            self.secondary_btn.configure(text="🗑  Delete", command=self._delete_entry,
+                                          fg_color="#e74c3c", hover_color="#c0392b")
+            self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
             self.filter_btn.pack(side="right", padx=(4, 0))
             self.filter_indicator.pack(side="right", padx=(4, 0))
             self._update_filter_indicator()
@@ -1882,6 +1962,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         self.source_entry.delete(0, "end")
         self.source_entry.insert(0, record.get("source") or "")
+
+        # Additional notes
+        self.notes_entry.delete("0.0", "end")
+        notes = record.get("additional_notes") or ""
+        if notes:
+            self.notes_entry.insert("0.0", notes)
 
         self.heading_entry.delete("1.0", "end")
         heading = record.get("heading") or ""
@@ -2119,6 +2205,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             record["category"] = category
             record["multi_category"] = multi_cat
             record["annotation_confidence"] = str(confidence)
+            record["additional_notes"] = self.notes_entry.get("0.0", "end-1c").strip()
             record["image_path"] = ";".join(image_rel_paths)
             if "timestamp" not in record or not record.get("timestamp"):
                 record["timestamp"] = datetime.now().isoformat()
@@ -2171,8 +2258,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         if not self.all_dataset_records:
             messagebox.showinfo("No Records", "All records have been deleted.")
-            self.mode_switcher.set("📝 Ann.")
-            self._toggle_mode("📝 Ann.")
+            self.mode_switcher.set("📝 Annotate")
+            self._toggle_mode("📝 Annotate")
             return
 
     def _rewrite_csv(self):
@@ -2199,6 +2286,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             "heading": self.heading_entry.get("1.0", "end-1c").strip(),
             "text": self.text_box.get("1.0", "end-1c").strip(),
             "confidence": self.confidence_entry.get().strip(),
+            "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
             "images": list(self.image_list),
         }
 
@@ -2242,6 +2330,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         self.confidence_entry.delete(0, "end")
         self.confidence_entry.insert(0, draft["confidence"] or "100")
+
+        # Restore additional notes
+        self.notes_entry.delete("0.0", "end")
+        notes = draft.get("additional_notes", "")
+        if notes:
+            self.notes_entry.insert("0.0", notes)
 
         self.image_list = draft["images"]
         self._refresh_previews()

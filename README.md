@@ -6,12 +6,13 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 <br>
 <p align="center">
-  <img src="annotator/assets/annotator_ui.png" alt="Fake News Annotator UI" width="600">
+  <img src="annotator/assets/annote_mode.png" alt="Fake News Annotator - Annotate Mode" width="400">
+  <img src="annotator/assets/review_mode.png" alt="Fake News Annotator - Review Mode" width="400">
 </p>
 
 ---
 
-## Download & Run
+## Installation
 
 Go to the [**Releases**](../../releases/latest) page and download the file for your operating system:
 
@@ -61,7 +62,7 @@ The tool will automatically create `dataset.csv`, `images/` folder, and a config
 
 ---
 
-## How to Use
+## Usage
 
 The application has two modes: **Annotate** (for adding new data) and **Review** (for checking and editing existing data). You can switch between them using the toggle at the top left of the screen.
 
@@ -79,8 +80,9 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
    - Click **"Browse Images"** to select files
    - Click **"Paste from Clipboard"** to paste a screenshot
    - Drag and drop images into the drop zone
-10. Click **"💾 Save Entry"**
-11. A confirmation popup will appear. Fields are cleared for the next entry.
+10. **Add Additional Notes** (optional) — for annotator use only, e.g., personal notes or remarks outside of classification
+11. Click **"💾 Save Entry"**
+12. A confirmation popup will appear. Fields are cleared for the next entry.
 
 ### Review Mode
 
@@ -134,6 +136,7 @@ YourFolder/
 | `category`              | News topic category (e.g., `Politics`, `Health`)                      |
 | `annotator`             | Name of the person who annotated this entry                           |
 | `annotation_confidence` | Confidence level of the annotation (0-100, default `100`)             |
+| `additional_notes`      | Annotator's internal notes (e.g., personal remarks outside classification)    |
 | `timestamp`             | ISO-format datetime when the entry was saved                          |
 
 ### Image Naming Convention
@@ -250,7 +253,7 @@ News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, We
 
 ---
 
-## Telegram Link Routing Bot
+## Bot Server (Telegram Link Routing)
 
 This project includes a built-in Telegram bot (located in the `bot-server/` directory) to easily route news links to assigned annotators. If you find a news article that belongs to another team member's assigned category, you can just text the link to the bot, and it will instantly forward it to them.
 
