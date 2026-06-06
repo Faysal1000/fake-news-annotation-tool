@@ -426,8 +426,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.all_dataset_records = []
         # Holds the currently filtered subset of records
         self.dataset_records = []
-        # The currently active filter in Review mode
-        self.active_filter = None
+        # The currently active advanced filter settings in Review mode
+        self.advanced_filter = None  # dict with keys: labels, types, categories, annotators, min_conf, max_conf
         # Index of the currently displayed record in review mode
         self.current_review_index = 0
         # Temporarily stores the user's in-progress annotation when switching modes
@@ -476,8 +476,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.mode_switcher.set("📝 Ann.")
         self.mode_switcher.pack(side="left", padx=(0, 10))
         
-        # Spacer on the right to perfectly balance the left button, ensuring the title is exactly centered
-        ctk.CTkFrame(top_bar, width=100, height=1, fg_color="transparent").pack(side="right", padx=(10, 0))
+        # Filter button + indicator on the right (hidden by default, shown in Review mode)
+        self.filter_indicator = ctk.CTkLabel(top_bar, text="",
+                                              font=ctk.CTkFont(size=10),
+                                              text_color="#f39c12")
+        # Not packed yet — shown only in Review mode
+        
+        self.filter_btn = ctk.CTkButton(top_bar, text="🔍", command=self._show_filter_popup,
+                                         width=28, height=24,
+                                         font=ctk.CTkFont(size=14),
+                                         fg_color="#2d2d5e", hover_color="#3d3d7e",
+                                         border_width=1, border_color="#555",
+                                         corner_radius=6)
+        # Not packed yet — shown only in Review mode
 
         ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=22, weight="bold")).pack(side="left", expand=True)
@@ -497,6 +508,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                        command=self._prev_record, width=80, height=28,
                                        font=ctk.CTkFont(size=12))
         self.prev_btn.pack(side="left", padx=8, pady=5)
+
         
         # Center frame for editable record index
         self.record_center_frame = ctk.CTkFrame(self.nav_frame, fg_color="transparent")
@@ -1319,30 +1331,68 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     return
         self.destroy()
 
-    def _apply_filter(self, filter_name, keep_index=False):
-        """Filter the dataset based on the clicked stat."""
+    def _apply_advanced_filter(self, keep_index=False):
+        """Filter the dataset based on the advanced filter settings."""
         if self.current_mode != "review":
             return
-        
-        self.active_filter = filter_name
-        
-        if not filter_name or filter_name == "Total":
+
+        filt = self.advanced_filter
+
+        if not filt:
+            # No filter active — show everything
             self.dataset_records = list(self.all_dataset_records)
-        elif filter_name in ("Fake", "Real"):
-            self.dataset_records = [r for r in self.all_dataset_records if r.get("label") == filter_name]
-        elif filter_name in ("Misinformation", "Rumor", "Clickbait"):
-            self.dataset_records = [r for r in self.all_dataset_records if r.get("multi_category") == filter_name]
         else:
-            # Must be a News Category
-            self.dataset_records = [r for r in self.all_dataset_records if r.get("category") == filter_name]
-            
+            filtered = list(self.all_dataset_records)
+
+            # Filter by label
+            sel_labels = filt.get("labels")
+            if sel_labels:
+                filtered = [r for r in filtered if (r.get("label") or "") in sel_labels]
+
+            # Filter by fake news type (multi_category)
+            sel_types = filt.get("types")
+            if sel_types:
+                filtered = [r for r in filtered if (r.get("multi_category") or "") in sel_types]
+
+            # Filter by news category
+            sel_cats = filt.get("categories")
+            if sel_cats:
+                filtered = [r for r in filtered if (r.get("category") or "") in sel_cats]
+
+            # Filter by source category
+            sel_src_cats = filt.get("source_categories")
+            if sel_src_cats:
+                filtered = [r for r in filtered if (r.get("source_category") or "") in sel_src_cats]
+
+            # Filter by annotator
+            sel_annotators = filt.get("annotators")
+            if sel_annotators:
+                filtered = [r for r in filtered if (r.get("annotator") or "") in sel_annotators]
+
+            # Filter by confidence interval
+            min_conf = filt.get("min_conf")
+            max_conf = filt.get("max_conf")
+            if min_conf is not None or max_conf is not None:
+                lo = min_conf if min_conf is not None else 0
+                hi = max_conf if max_conf is not None else 100
+                def _conf_in_range(r):
+                    try:
+                        c = int(r.get("annotation_confidence") or "100")
+                    except ValueError:
+                        c = 100
+                    return lo <= c <= hi
+                filtered = [r for r in filtered if _conf_in_range(r)]
+
+            self.dataset_records = filtered
+
         if not keep_index:
             self.current_review_index = 0
         elif self.current_review_index >= len(self.dataset_records):
             self.current_review_index = max(0, len(self.dataset_records) - 1)
-            
-        self._update_stats() # Re-render stats to update highlights
-        
+
+        self._update_stats()
+        self._update_filter_indicator()
+
         # In Review mode, always attempt to display the current record
         if self.dataset_records:
             self.record_index_entry.configure(state="normal")
@@ -1357,43 +1407,277 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.prev_btn.configure(state="disabled")
             self.next_btn.configure(state="disabled")
 
+    def _update_filter_indicator(self):
+        """Update the filter indicator label next to the filter button."""
+        if self.advanced_filter:
+            count = 0
+            f = self.advanced_filter
+            if f.get("labels"): count += 1
+            if f.get("types"): count += 1
+            if f.get("categories"): count += 1
+            if f.get("source_categories"): count += 1
+            if f.get("annotators"): count += 1
+            if f.get("min_conf") is not None or f.get("max_conf") is not None: count += 1
+            self.filter_indicator.configure(text=f"⚡ {count} filter(s)")
+            self.filter_btn.configure(fg_color="#4a3f00", border_color="#f39c12")
+        else:
+            self.filter_indicator.configure(text="")
+            self.filter_btn.configure(fg_color="#2d2d5e", border_color="#555")
+
+    def _collect_unique_values(self, field):
+        """Collect all unique non-empty values for a given field from all records."""
+        values = set()
+        for r in self.all_dataset_records:
+            v = (r.get(field) or "").strip()
+            if v:
+                values.add(v)
+        return sorted(values)
+
+    def _show_filter_popup(self):
+        """Open a filter settings popup with checkboxes and confidence range."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("Filter Records")
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        popup.resizable(True, True)
+
+        # Size and center the popup
+        pw, ph = 480, 620
+        popup.geometry(f"{pw}x{ph}")
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (pw // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
+        popup.geometry(f"+{x}+{y}")
+
+        # Title
+        ctk.CTkLabel(popup, text="🔽 Filter Settings",
+                     font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(12, 6))
+
+        # Scrollable content area
+        scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=12, pady=(0, 6))
+
+        # Pre-populate from current filter
+        cur = self.advanced_filter or {}
+
+        # ── Helper to build a checkbox section ──
+        def _checkbox_section(parent, title, options, pre_selected):
+            """Build a section with a title and checkboxes; returns list of (value, BooleanVar) tuples."""
+            frame = ctk.CTkFrame(parent, fg_color="#222244", corner_radius=8,
+                                  border_width=1, border_color="#444")
+            frame.pack(fill="x", pady=(6, 2))
+
+            ctk.CTkLabel(frame, text=title,
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color="#ccc").pack(anchor="w", padx=10, pady=(6, 2))
+
+            vars_list = []
+            row_frame = ctk.CTkFrame(frame, fg_color="transparent")
+            row_frame.pack(fill="x", padx=10, pady=(0, 6))
+
+            for i, opt in enumerate(options):
+                var = ctk.BooleanVar(value=(opt in pre_selected) if pre_selected else False)
+                cb = ctk.CTkCheckBox(row_frame, text=opt, variable=var,
+                                      font=ctk.CTkFont(size=12),
+                                      height=24, checkbox_width=18, checkbox_height=18)
+                cb.grid(row=i // 2, column=i % 2, sticky="w", padx=(0, 16), pady=2)
+                vars_list.append((opt, var))
+            return vars_list
+
+        # ── 1. Label (Fake / Real) ──
+        label_vars = _checkbox_section(scroll, "Label",
+                                       ["Fake", "Real"],
+                                       cur.get("labels", set()))
+
+        # ── 2. Fake News Type ──
+        type_vars = _checkbox_section(scroll, "Fake News Type",
+                                      MULTI_CATEGORIES,
+                                      cur.get("types", set()))
+
+        # ── 3. News Category ──
+        all_categories = self._collect_unique_values("category")
+        cat_vars = _checkbox_section(scroll, "News Category",
+                                     all_categories if all_categories else ["(no data)"],
+                                     cur.get("categories", set()))
+
+        # ── 4. Source Category ──
+        all_src_cats = self._collect_unique_values("source_category")
+        src_cat_vars = _checkbox_section(scroll, "Source Category",
+                                         all_src_cats if all_src_cats else ["(no data)"],
+                                         cur.get("source_categories", set()))
+
+        # ── 5. Annotator ──
+        all_annotators = self._collect_unique_values("annotator")
+        ann_vars = _checkbox_section(scroll, "Annotator",
+                                     all_annotators if all_annotators else ["(no data)"],
+                                     cur.get("annotators", set()))
+
+        # ── 6. Confidence Interval ──
+        conf_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
+                                   border_width=1, border_color="#444")
+        conf_frame.pack(fill="x", pady=(6, 2))
+
+        ctk.CTkLabel(conf_frame, text="Confidence Interval",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#ccc").pack(anchor="w", padx=10, pady=(6, 2))
+
+        conf_row = ctk.CTkFrame(conf_frame, fg_color="transparent")
+        conf_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        ctk.CTkLabel(conf_row, text="Min:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
+        min_conf_entry = ctk.CTkEntry(conf_row, width=60, height=26,
+                                       font=ctk.CTkFont(size=12), justify="center")
+        min_conf_entry.pack(side="left", padx=(0, 16))
+        min_conf_entry.insert(0, str(cur.get("min_conf", 0)))
+
+        ctk.CTkLabel(conf_row, text="Max:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
+        max_conf_entry = ctk.CTkEntry(conf_row, width=60, height=26,
+                                       font=ctk.CTkFont(size=12), justify="center")
+        max_conf_entry.pack(side="left")
+        max_conf_entry.insert(0, str(cur.get("max_conf", 100)))
+
+        # ── Buttons ──
+        btn_container = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_container.pack(fill="x", padx=12, pady=(4, 12))
+
+        # Collect all checkbox var lists for the clear-all function
+        all_checkbox_vars = label_vars + type_vars + cat_vars + src_cat_vars + ann_vars
+
+        def _clear_selections():
+            """Uncheck every checkbox and reset confidence to 0–100 without closing."""
+            for _, var in all_checkbox_vars:
+                var.set(False)
+            min_conf_entry.delete(0, "end")
+            min_conf_entry.insert(0, "0")
+            max_conf_entry.delete(0, "end")
+            max_conf_entry.insert(0, "100")
+
+        def _apply():
+            # Collect selected values
+            sel_labels = {v for v, var in label_vars if var.get()}
+            sel_types = {v for v, var in type_vars if var.get()}
+            sel_cats = {v for v, var in cat_vars if var.get() and v != "(no data)"}
+            sel_src_cats = {v for v, var in src_cat_vars if var.get() and v != "(no data)"}
+            sel_annotators = {v for v, var in ann_vars if var.get() and v != "(no data)"}
+
+            # Parse confidence
+            try:
+                mn = int(min_conf_entry.get().strip())
+            except ValueError:
+                mn = 0
+            try:
+                mx = int(max_conf_entry.get().strip())
+            except ValueError:
+                mx = 100
+            mn = max(0, min(100, mn))
+            mx = max(0, min(100, mx))
+            if mn > mx:
+                mn, mx = mx, mn
+
+            # Check if any filter is actually active
+            has_filter = (
+                bool(sel_labels) or bool(sel_types) or bool(sel_cats) or
+                bool(sel_src_cats) or bool(sel_annotators) or mn > 0 or mx < 100
+            )
+
+            if has_filter:
+                self.advanced_filter = {
+                    "labels": sel_labels if sel_labels else None,
+                    "types": sel_types if sel_types else None,
+                    "categories": sel_cats if sel_cats else None,
+                    "source_categories": sel_src_cats if sel_src_cats else None,
+                    "annotators": sel_annotators if sel_annotators else None,
+                    "min_conf": mn if mn > 0 else None,
+                    "max_conf": mx if mx < 100 else None,
+                }
+            else:
+                self.advanced_filter = None
+
+            self._apply_advanced_filter()
+            popup.destroy()
+
+        def _clear_and_apply():
+            self.advanced_filter = None
+            self._apply_advanced_filter()
+            popup.destroy()
+
+        # Row 1: Apply + Clear All Selections
+        row1 = ctk.CTkFrame(btn_container, fg_color="transparent")
+        row1.pack(fill="x", pady=(0, 6))
+
+        ctk.CTkButton(row1, text="✅ Apply Filter", command=_apply,
+                       height=36, font=ctk.CTkFont(size=14, weight="bold"),
+                       fg_color="#2ecc71", hover_color="#27ae60",
+                       text_color="black").pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+        ctk.CTkButton(row1, text="↺ Clear All", command=_clear_selections,
+                       height=36, font=ctk.CTkFont(size=13),
+                       fg_color="#555", hover_color="#777",
+                       width=130).pack(side="left")
+
+        # Row 2: Clear Filter + Cancel
+        row2 = ctk.CTkFrame(btn_container, fg_color="transparent")
+        row2.pack(fill="x")
+
+        ctk.CTkButton(row2, text="🗑️ Clear Filter", command=_clear_and_apply,
+                       height=36, font=ctk.CTkFont(size=13, weight="bold"),
+                       fg_color="#e74c3c", hover_color="#c0392b").pack(side="left", expand=True, fill="x", padx=(0, 6))
+
+        ctk.CTkButton(row2, text="Cancel", command=popup.destroy,
+                       height=36, font=ctk.CTkFont(size=13),
+                       fg_color="transparent", border_width=1,
+                       border_color="#555", width=130).pack(side="left")
+
     def _create_stat_label(self, parent, text, filter_key=None, is_separator=False):
-        """Helper to create interactive stat labels inside a frame."""
+        """Helper to create stat labels inside a frame (display only, no click filtering)."""
         if is_separator:
             lbl = ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=13))
             return
-            
-        is_active = (self.current_mode == "review") and (
-            (filter_key == self.active_filter) or 
-            (self.active_filter is None and filter_key == "Total")
-        )
-        
-        color = "#f39c12" if is_active else ("#ffffff" if ctk.get_appearance_mode() == "Dark" else "#000000")
-        fnt = ctk.CTkFont(size=13, weight="bold" if is_active else "normal", underline=is_active)
-        
+
+        color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#000000"
+        fnt = ctk.CTkFont(size=13)
         lbl = ctk.CTkLabel(parent, text=text, font=fnt, text_color=color)
-        
-        if filter_key:
-            lbl.bind("<Button-1>", lambda e, k=filter_key: self._apply_filter(k))
-            if self.current_mode == "review":
-                lbl.configure(cursor="hand2")
-            else:
-                lbl.configure(cursor="arrow")
 
     def _update_stats(self):
         """Refresh the stats bar at the top of the UI.
         
-        Reads the current entry count from the CSV, image count from
-        the images/ folder, label/subcategory counts, and news category
-        counts, then dynamically builds clickable stat labels.
+        In Review mode with a filter active, shows counts from the filtered
+        subset. Otherwise shows global counts from the CSV.
         Called after each save and at startup.
         """
-        counts = get_label_counts()
-        img_count = get_image_count()
-        total = counts["total"]
-        fake = counts["fake"]
-        real = counts["real"]
-        sub = counts["fake_subcategories"]
+        # Determine if we should show filtered counts
+        use_filtered = (self.current_mode == "review" and self.advanced_filter
+                        and hasattr(self, 'dataset_records'))
+
+        if use_filtered:
+            # Compute counts from the filtered records
+            records = self.dataset_records
+            total = len(records)
+            fake = sum(1 for r in records if (r.get("label") or "") == "Fake")
+            real = sum(1 for r in records if (r.get("label") or "") == "Real")
+            sub = {"Misinformation": 0, "Rumor": 0, "Clickbait": 0}
+            news_cats = {}
+            img_count = 0
+            for r in records:
+                mc = (r.get("multi_category") or "").strip()
+                if mc in sub:
+                    sub[mc] += 1
+                cat = (r.get("category") or "").strip()
+                if cat:
+                    news_cats[cat] = news_cats.get(cat, 0) + 1
+                ip = (r.get("image_path") or "").strip()
+                if ip:
+                    img_count += len([p for p in ip.split(";") if p.strip()])
+            global_total = len(self.all_dataset_records)
+        else:
+            counts = get_label_counts()
+            img_count = get_image_count()
+            total = counts["total"]
+            fake = counts["fake"]
+            real = counts["real"]
+            sub = counts["fake_subcategories"]
+            news_cats = counts["news_categories"]
+            global_total = None
 
         # Clear existing widgets
         for widget in self.stats_frame.winfo_children():
@@ -1401,23 +1685,41 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         for widget in self.category_stats_frame.winfo_children():
             widget.destroy()
 
-        # Line 1: Total, Images, Fake, Real + always show subcategory breakdown
-        self._create_stat_label(self.stats_frame, f"Total: {total}", filter_key="Total")
+        # Line 1: Total, Images, Fake, Real + subcategory breakdown
+        if use_filtered:
+            self._create_stat_label(self.stats_frame, f"Filtered: {total} / Total: {global_total}", filter_key="Total")
+        else:
+            self._create_stat_label(self.stats_frame, f"Total: {total}", filter_key="Total")
         self._create_stat_label(self.stats_frame, "|", is_separator=True)
         self._create_stat_label(self.stats_frame, f"Images: {img_count}", filter_key=None)
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Fake: {fake}", filter_key="Fake")
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Real: {real}", filter_key="Real")
-        self._create_stat_label(self.stats_frame, "||", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Misinformation: {sub['Misinformation']}", filter_key="Misinformation")
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Rumor: {sub['Rumor']}", filter_key="Rumor")
-        self._create_stat_label(self.stats_frame, "|", is_separator=True)
-        self._create_stat_label(self.stats_frame, f"Clickbait: {sub['Clickbait']}", filter_key="Clickbait")
 
-        # Line 2: News category counts
-        news_cats = counts["news_categories"]
+        # Build label/sub items, skipping zeros when filtered
+        label_items = []
+        if not use_filtered or fake > 0:
+            label_items.append(("Fake", fake))
+        if not use_filtered or real > 0:
+            label_items.append(("Real", real))
+
+        sub_items = []
+        for name in ("Misinformation", "Rumor", "Clickbait"):
+            if not use_filtered or sub[name] > 0:
+                sub_items.append((name, sub[name]))
+
+        if label_items:
+            self._create_stat_label(self.stats_frame, "|", is_separator=True)
+            for i, (name, cnt) in enumerate(label_items):
+                self._create_stat_label(self.stats_frame, f"{name}: {cnt}", filter_key=name)
+                if i < len(label_items) - 1:
+                    self._create_stat_label(self.stats_frame, "|", is_separator=True)
+
+        if sub_items:
+            self._create_stat_label(self.stats_frame, "||", is_separator=True)
+            for i, (name, cnt) in enumerate(sub_items):
+                self._create_stat_label(self.stats_frame, f"{name}: {cnt}", filter_key=name)
+                if i < len(sub_items) - 1:
+                    self._create_stat_label(self.stats_frame, "|", is_separator=True)
+
+        # Line 2: News category counts (only non-zero when filtered)
         if news_cats:
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
             
@@ -1456,6 +1758,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.current_mode = "annotate"
             self.nav_frame.pack_forget()
             self.review_btn_frame.pack_forget()
+            self.filter_btn.pack_forget()
+            self.filter_indicator.pack_forget()
             self.annotate_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
             self._restore_draft()
             self._update_stats()
@@ -1477,6 +1781,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.review_btn_frame.pack(fill="x", padx=10, pady=(10, 5))
             self.nav_frame.pack(fill="x", padx=10, pady=(5, 15),
                                 after=self.review_btn_frame)
+            self.filter_btn.pack(side="right", padx=(4, 0))
+            self.filter_indicator.pack(side="right", padx=(4, 0))
+            self._update_filter_indicator()
 
     def _load_dataset(self):
         """Load all records from the dataset CSV into memory for review."""
@@ -1489,7 +1796,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             for row in reader:
                 self.all_dataset_records.append(row)
                 
-        self._apply_filter(self.active_filter)
+        self._apply_advanced_filter()
 
     def _display_record(self, index):
         """Populate all UI fields with data from the record at the given index.
@@ -1779,7 +2086,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             return False
 
         # Apply filter again to reflect changes visually and filter out records that no longer match
-        self._apply_filter(self.active_filter, keep_index=True)
+        self._apply_advanced_filter(keep_index=True)
         if show_success:
             messagebox.showinfo("Update Complete",
                 f"Record {self.current_review_index + 1} updated successfully!")
@@ -1817,7 +2124,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             messagebox.showerror("Delete Error", f"Failed to delete entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return
 
-        self._apply_filter(self.active_filter, keep_index=True)
+        self._apply_advanced_filter(keep_index=True)
 
         if not self.all_dataset_records:
             messagebox.showinfo("No Records", "All records have been deleted.")
