@@ -2,7 +2,7 @@
 
 A standalone GUI tool for collecting a multimodal fake news detection dataset. Multiple annotators can use this tool to enter news text, attach images, classify entries as Fake or Real, and specify the type of fake news. All data is saved in a structured CSV file with images stored locally.
 
-**No coding knowledge required** — download a single file, double-click, and start annotating. 
+**No coding knowledge required** — download a single file, double-click, and start annotating.
 
 <br>
 <p align="center">
@@ -15,12 +15,11 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 Go to the [**Releases**](../../releases/latest) page and download the file for your operating system:
 
-| File | Platform |
-|------|----------|
-| `FakeNewsAnnotator-Windows.exe` | Windows 10/11 (64-bit) |
+| File                                       | Platform                     |
+| ------------------------------------------ | ---------------------------- |
+| `FakeNewsAnnotator-Windows.exe`            | Windows 10/11 (64-bit)       |
 | `FakeNewsAnnotator-macOS-AppleSilicon.zip` | macOS (Apple M1/M2/M3/M4/M5) |
-| `FakeNewsAnnotator-macOS-Intel.zip` | macOS (Intel processors) |
-| `FakeNewsAnnotator-Linux` | Ubuntu / Debian / Fedora |
+| `FakeNewsAnnotator-Linux`                  | Ubuntu / Debian / Fedora     |
 
 ### How to run
 
@@ -29,26 +28,22 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 3. **macOS users (Important)**:
    - Because this app is not signed with a paid Apple Developer account, macOS will quarantine it if downloaded through a web browser, and it will silently fail to open.
    - **Easiest solution (No Quarantine):** Open **Terminal** and paste the exact command for your Mac. This will create a `Fake News Dataset` folder on your Desktop, download the app there, and extract it so you can just double-click to open it:
-     
-     *For Mac M1/M2/M3/M4 (Apple Silicon):*
+
+     _For Mac M1/M2/M3/M4 (Apple Silicon):_
+
      ```bash
      mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip -o FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip
-     ```
-     
-     *For older Intel Macs:*
-     ```bash
-     mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-Intel.zip && unzip -o FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip
      ```
 
    - **Alternative manual fix:** If you already downloaded the `.zip` through Safari/Chrome and extracted it, open **Terminal** and type:
      ```bash
-     xattr -cr 
+     xattr -cr
      ```
-     *(Make sure to include the space after `-cr`)*
+     _(Make sure to include the space after `-cr`)_
    - Then **drag and drop** the `FakeNewsAnnotator.app` icon directly into the Terminal window. It will automatically fill in the correct path.
    - Press **Enter**. You can now double-click the app to open it normally!
 
-4. **Windows users**: 
+4. **Windows users**:
    - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to automatically create a `Fake News Dataset` folder on your Desktop and download it there:
      ```cmd
      mkdir "%USERPROFILE%\Desktop\Fake News Dataset" 2>nul & cd "%USERPROFILE%\Desktop\Fake News Dataset" & curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Windows.exe
@@ -126,20 +121,20 @@ YourFolder/
 
 ### CSV Columns
 
-| Column | Description |
-|--------|-------------|
-| `id` | Unique identifier (UUID) — safe for merging across annotators |
-| `heading` | Optional headline / title of the news item |
-| `text` | News content body |
-| `image_path` | Relative path(s) to image(s), separated by `;` if multiple |
-| `label` | `Fake` or `Real` |
-| `multi_category` | Fake news sub-type (`Misinformation`, `Rumor`, `Clickbait`) or `Real` |
-| `source` | Source link / URL (optional) |
-| `source_category` | Platform where news was found (e.g., `Facebook`, `News Channel`) |
-| `category` | News topic category (e.g., `Politics`, `Health`) |
-| `annotator` | Name of the person who annotated this entry |
-| `annotation_confidence` | Confidence level of the annotation (0-100, default `100`) |
-| `timestamp` | ISO-format datetime when the entry was saved |
+| Column                  | Description                                                           |
+| ----------------------- | --------------------------------------------------------------------- |
+| `id`                    | Unique identifier (UUID) — safe for merging across annotators         |
+| `heading`               | Optional headline / title of the news item                            |
+| `text`                  | News content body                                                     |
+| `image_path`            | Relative path(s) to image(s), separated by `;` if multiple            |
+| `label`                 | `Fake` or `Real`                                                      |
+| `multi_category`        | Fake news sub-type (`Misinformation`, `Rumor`, `Clickbait`) or `Real` |
+| `source`                | Source link / URL (optional)                                          |
+| `source_category`       | Platform where news was found (e.g., `Facebook`, `News Channel`)      |
+| `category`              | News topic category (e.g., `Politics`, `Health`)                      |
+| `annotator`             | Name of the person who annotated this entry                           |
+| `annotation_confidence` | Confidence level of the annotation (0-100, default `100`)             |
+| `timestamp`             | ISO-format datetime when the entry was saved                          |
 
 ### Image Naming Convention
 
@@ -226,26 +221,29 @@ The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) t
 
 ## Troubleshooting
 
-| Problem | Solution |
-|---------|----------|
-| macOS blocks the app | Right-click → "Open" → click "Open" in the dialog |
+| Problem                       | Solution                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------- |
+| macOS blocks the app          | Right-click → "Open" → click "Open" in the dialog                                      |
 | macOS app crashes immediately | Download the `.zip` file from Releases and extract it. Do not download the raw binary. |
-| Linux: "Permission denied" | Run `chmod +x FakeNewsAnnotator-Linux` first |
-| Windows SmartScreen warning | Click "More info" → "Run anyway" |
-| Drag and drop not working | Use the **Browse** or **Paste** buttons instead |
-| App window is too small | Drag the window edges to resize it |
+| Linux: "Permission denied"    | Run `chmod +x FakeNewsAnnotator-Linux` first                                           |
+| Windows SmartScreen warning   | Click "More info" → "Run anyway"                                                       |
+| Drag and drop not working     | Use the **Browse** or **Paste** buttons instead                                        |
+| App window is too small       | Drag the window edges to resize it                                                     |
 
 ---
 
 ## Categories Reference
 
 ### News Categories
+
 Politics, Health, Science, Technology, Sports, Entertainment, Religion, Education, Environment, International, Miscellaneous
 
 ### Source Categories
+
 News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, Website, Miscellaneous
 
 ### Fake News Types (Multi-Category)
+
 - **Misinformation** — False information spread without intent to deceive
 - **Rumor** — Unverified claims spread through informal channels
 - **Clickbait** — Misleading headlines designed to attract clicks
@@ -278,7 +276,9 @@ This project includes a built-in Telegram bot (located in the `bot-server/` dire
 ### Usage
 
 Simply send a command followed by the link to the bot:
+
 ```
 /politics https://news-article-link.com
 ```
+
 Or use the provided shortcuts (e.g., `/p https://news-article-link.com`). The bot will automatically detect who is in charge of Politics and forward the message to them. Type `/usage` in the bot to see all configured shortcuts.
