@@ -23,9 +23,9 @@ jobs:
           - os: windows-latest
             artifact_name: FakeNewsAnnotator-Windows.exe
             artifact_path: dist/FakeNewsAnnotator-Windows.exe
-          - os: macos-13        # Intel Mac (x86_64)
-            artifact_name: FakeNewsAnnotator-macOS-Intel.zip
-            artifact_path: dist/FakeNewsAnnotator-macOS-Intel.zip
+          # - os: macos-13        # Intel Mac (x86_64) - Disabled due to GitHub deprecating free Intel runners
+          #   artifact_name: FakeNewsAnnotator-macOS-Intel.zip
+          #   artifact_path: dist/FakeNewsAnnotator-macOS-Intel.zip
           - os: macos-latest    # Apple Silicon (ARM64)
             artifact_name: FakeNewsAnnotator-macOS-AppleSilicon.zip
             artifact_path: dist/FakeNewsAnnotator-macOS-AppleSilicon.zip
@@ -128,7 +128,6 @@ jobs:
             |------|----------|
             | `FakeNewsAnnotator-Windows.exe` | Windows 10/11 (64-bit) |
             | `FakeNewsAnnotator-macOS-AppleSilicon` | macOS (Apple M1/M2/M3/M4/M5) |
-            | `FakeNewsAnnotator-macOS-Intel` | macOS (Intel) |
             | `FakeNewsAnnotator-Linux` | Ubuntu / Debian / Fedora |
 
             ### How to use
