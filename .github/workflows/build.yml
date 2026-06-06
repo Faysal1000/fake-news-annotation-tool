@@ -23,9 +23,9 @@ jobs:
           - os: windows-latest
             artifact_name: FakeNewsAnnotator-Windows.exe
             artifact_path: dist/FakeNewsAnnotator-Windows.exe
-          # - os: macos-13        # Intel Mac (x86_64)
-          #   artifact_name: FakeNewsAnnotator-macOS-Intel.zip
-          #   artifact_path: dist/FakeNewsAnnotator-macOS-Intel.zip
+          - os: macos-13        # Intel Mac (x86_64)
+            artifact_name: FakeNewsAnnotator-macOS-Intel.zip
+            artifact_path: dist/FakeNewsAnnotator-macOS-Intel.zip
           - os: macos-latest    # Apple Silicon (ARM64)
             artifact_name: FakeNewsAnnotator-macOS-AppleSilicon.zip
             artifact_path: dist/FakeNewsAnnotator-macOS-AppleSilicon.zip
