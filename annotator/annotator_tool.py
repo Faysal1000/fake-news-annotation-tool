@@ -172,6 +172,39 @@ def ensure_dirs():
     IMAGES_DIR.mkdir(exist_ok=True)
     VIDEOS_DIR.mkdir(exist_ok=True)
 
+def migrate_csv_format():
+    """Check if dataset.csv uses an old format and rewrite it to match CSV_COLUMNS."""
+    if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
+        return
+    
+    # Check the header of the existing CSV
+    with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        reader = csv.reader(f)
+        try:
+            header = next(reader)
+        except StopIteration:
+            return
+            
+    if header == CSV_COLUMNS:
+        return
+        
+    print("[INFO] Migrating dataset.csv to new format...")
+    # Read old data mapping fields as best as possible
+    with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        old_data = list(reader)
+        
+    # Overwrite the CSV with new headers
+    with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer.writeheader()
+        for row in old_data:
+            # Provide default empty values for any new columns (like video_path)
+            for col in CSV_COLUMNS:
+                if col not in row:
+                    row[col] = ""
+            writer.writerow(row)
+
 
 def generate_id():
     """Generate a UUID4 string to use as a unique entry ID.
@@ -408,6 +441,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # Make sure the images/ directory exists before anything else
         ensure_dirs()
+        migrate_csv_format()
 
         # Set the visual theme to dark mode with blue accent color
         ctk.set_appearance_mode("dark")
