@@ -108,6 +108,9 @@ else:
 # IMAGES_DIR: Folder where all uploaded/pasted images are saved.
 IMAGES_DIR = SCRIPT_DIR / "images"
 
+# VIDEOS_DIR: Folder where uploaded videos are saved.
+VIDEOS_DIR = SCRIPT_DIR / "videos"
+
 # CSV_PATH: The main dataset CSV file. Created automatically on first save.
 CSV_PATH = SCRIPT_DIR / "dataset.csv"
 
@@ -125,10 +128,10 @@ CONFIG_PATH = SCRIPT_DIR / ".annotator_config.json"
 # - annotation_confidence: Confidence level of the annotation (0-100, default 100)
 # - timestamp:  ISO-format datetime when the entry was saved
 # - heading:         Optional headline/title of the news item
-# - multi_category:  Sub-classification for fake news (Misinformation/Rumor/Clickbait)
+# - multi_category:  Sub-classification for fake news (Misinformation/Satire/Clickbait)
 #                    or "Real" when the label is Real
 # - source_category: Platform/medium where the news was found (required)
-CSV_COLUMNS = ["id", "heading", "text", "image_path", "label", "multi_category",
+CSV_COLUMNS = ["id", "heading", "text", "image_path", "video_path", "label", "multi_category",
                "source", "source_category", "category", "annotator", "annotation_confidence",
                "additional_notes", "timestamp"]
 
@@ -141,7 +144,7 @@ CATEGORIES = ["", "Politics", "Health", "Science", "Technology", "Sports",
 
 # MULTI_CATEGORIES: Sub-classification options shown when the label is "Fake".
 # The annotator must pick exactly one to describe the type of fake news.
-MULTI_CATEGORIES = ["Misinformation", "Rumor", "Clickbait"]
+MULTI_CATEGORIES = ["Misinformation", "Satire", "Clickbait"]
 
 # SOURCE_CATEGORIES: Predefined platform/medium options for the source category
 # dropdown. This field is required — the annotator must specify where the
@@ -153,6 +156,7 @@ SOURCE_CATEGORIES = ["", "News Channel", "Newspaper", "Facebook", "Tiktok",
 # IMAGE_EXTENSIONS: Allowed image file extensions. Only these file types
 # can be browsed, pasted, or dropped into the tool.
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
+VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
 
 # =============================================================================
@@ -166,6 +170,7 @@ def ensure_dirs():
     before any image save operations.
     """
     IMAGES_DIR.mkdir(exist_ok=True)
+    VIDEOS_DIR.mkdir(exist_ok=True)
 
 
 def generate_id():
@@ -195,6 +200,13 @@ def get_image_count():
     return len([f for f in IMAGES_DIR.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS])
 
 
+def get_video_count():
+    """Count how many video files currently exist in the videos/ folder."""
+    if not VIDEOS_DIR.exists():
+        return 0
+    return len([f for f in VIDEOS_DIR.iterdir() if f.suffix.lower() in VIDEO_EXTENSIONS])
+
+
 def get_entry_count():
     """Count how many data rows exist in the dataset CSV file.
     
@@ -217,7 +229,7 @@ def get_label_counts():
       - Total entries
       - Fake entries
       - Real entries
-      - Fake subcategory breakdown (Misinformation, Rumor, Clickbait)
+      - Fake subcategory breakdown (Misinformation, Satire, Clickbait)
       - News category breakdown (Politics, Health, etc.)
     
     Returns:
@@ -226,9 +238,9 @@ def get_label_counts():
               (a dict mapping category name to count).
     """
     result = {"total": 0, "fake": 0, "real": 0,
-              "fake_subcategories": {"Misinformation": 0, "Rumor": 0, "Clickbait": 0},
+              "fake_subcategories": {"Misinformation": 0, "Satire": 0, "Clickbait": 0},
               "news_categories": {},
-              "only_image": 0, "only_text": 0, "both_text_image": 0}
+              "only_image": 0, "only_text": 0, "both_text_image": 0, "videos": 0}
     if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
         return result
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
@@ -259,6 +271,9 @@ def get_label_counts():
                 result["only_text"] += 1
             elif not has_text and has_image:
                 result["only_image"] += 1
+                
+            if (row.get("video_path") or "").strip():
+                result["videos"] += 1
     return result
 
 
@@ -430,6 +445,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         #   - (None, Image)  -> image pasted from clipboard (PIL object stored)
         # This list is cleared after each save.
         self.image_list = []
+        
+        # VIDEO PATH: Stores the path of the selected video.
+        # Max one video can be added per entry.
+        self.video_path = None
 
         # PREVIEW PHOTOS: Keeps references to ImageTk.PhotoImage objects.
         # Tkinter requires us to hold a reference to displayed images,
@@ -599,11 +618,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.text_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
         # Image section
-        self._section(self.left_col, "🖼️ Images (required if no text)")
+        self._section(self.left_col, "🖼️ Images & Video (required if no text)")
         img_btn_frame = ctk.CTkFrame(self.left_col, fg_color="transparent")
         img_btn_frame.pack(fill="x", padx=10, pady=(0, 4))
 
-        ctk.CTkButton(img_btn_frame, text="📁 Browse", command=self._browse_image,
+        ctk.CTkButton(img_btn_frame, text="📁 Browse", command=self._browse_media,
                        width=100, height=26, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
         ctk.CTkButton(img_btn_frame, text="📋 Paste", command=self._paste_image,
                        width=100, height=26, font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 6))
@@ -617,7 +636,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.drop_frame.pack(fill="both", padx=10, pady=(4, 6))
 
         self.drop_label = ctk.CTkLabel(self.drop_frame,
-                                        text="📥 Drag & Drop image(s) here\nor use Browse / Paste buttons above",
+                                        text="📥 Drag & Drop image(s) / video here\nor use Browse / Paste buttons above",
                                         font=ctk.CTkFont(size=13), text_color="#888")
         self.drop_label.pack(expand=True, fill="both", pady=15)
 
@@ -690,11 +709,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             fg_color="#e67e22", hover_color="#d35400")
         self.radio_misinfo.pack(side="left", padx=(0, 12))
         
-        self.radio_rumor = ctk.CTkRadioButton(
-            mc_radios, text="Rumor", variable=self.multi_cat_var,
-            value="Rumor", font=ctk.CTkFont(size=12),
+        self.radio_satire = ctk.CTkRadioButton(
+            mc_radios, text="Satire", variable=self.multi_cat_var,
+            value="Satire", font=ctk.CTkFont(size=12),
             fg_color="#9b59b6", hover_color="#8e44ad")
-        self.radio_rumor.pack(side="left", padx=(0, 12))
+        self.radio_satire.pack(side="left", padx=(0, 12))
         
         self.radio_clickbait = ctk.CTkRadioButton(
             mc_radios, text="Clickbait", variable=self.multi_cat_var,
@@ -873,8 +892,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         """Show or hide the multi-category panel based on the selected label.
         
         Called whenever the user clicks a label toggle button (Fake or Real).
-        - If "Fake" is selected: the multi-category frame is shown so the
-          annotator can pick a fake news sub-type (Misinformation/Rumor/Clickbait).
+        # MULTI-CATEGORY: Only relevant if label is "Fake", in which case the
+        #          annotator can pick a fake news sub-type (Misinformation/Satire/Clickbait).
         - If "Real" is selected: the multi-category frame is hidden and the
           multi_cat_var is cleared (multi_category will be set to "Real" on save).
         """
@@ -936,32 +955,41 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if p:
                 paths.append(p.strip())
 
-        # Try to add each dropped file as an image
+        # Try to add each dropped file as an image or video
         added = 0
         for p in paths:
             path = Path(p)
             if path.suffix.lower() in IMAGE_EXTENSIONS:
                 self._add_image_from_path(path)
                 added += 1
+            elif path.suffix.lower() in VIDEO_EXTENSIONS:
+                self._add_video_from_path(path)
+                added += 1
         # If nothing valid was dropped, show a warning
         if added == 0:
-            messagebox.showwarning("Invalid File", "Please drop image files only (jpg, png, gif, bmp, webp).")
+            messagebox.showwarning("Invalid File", "Please drop image or video files only.")
 
     # =========================================================================
     # IMAGE OPERATIONS
     # =========================================================================
 
-    def _browse_image(self):
-        """Open a file dialog for the user to select one or more image files.
+    def _browse_media(self):
+        """Open a file dialog for the user to select images or a video.
         
-        The dialog is filtered to only show image file types defined in
-        IMAGE_EXTENSIONS. Multiple selection is enabled so the user can
-        pick several images at once for a single entry.
+        The dialog is filtered to show valid image and video types.
         """
-        ftypes = [("Image files", " ".join(f"*{e}" for e in IMAGE_EXTENSIONS))]
-        paths = filedialog.askopenfilenames(title="Select Image(s)", filetypes=ftypes)
+        ftypes = [
+            ("All Media", " ".join(f"*{e}" for e in IMAGE_EXTENSIONS + VIDEO_EXTENSIONS)),
+            ("Image files", " ".join(f"*{e}" for e in IMAGE_EXTENSIONS)),
+            ("Video files", " ".join(f"*{e}" for e in VIDEO_EXTENSIONS))
+        ]
+        paths = filedialog.askopenfilenames(title="Select Media", filetypes=ftypes)
         for path in paths:
-            self._add_image_from_path(Path(path))
+            p = Path(path)
+            if p.suffix.lower() in IMAGE_EXTENSIONS:
+                self._add_image_from_path(p)
+            elif p.suffix.lower() in VIDEO_EXTENSIONS:
+                self._add_video_from_path(p)
 
     def _paste_image(self):
         """Grab an image from the system clipboard and add it to the image list.
@@ -1016,6 +1044,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         except Exception as e:
             messagebox.showerror("Error", f"Could not open image: {e}")
 
+    def _add_video_from_path(self, path: Path):
+        """Add a video to the entry. Max one video allowed."""
+        if path.suffix.lower() not in VIDEO_EXTENSIONS:
+            messagebox.showwarning("Invalid File", "Please select a video file only.")
+            return
+        if self.video_path is not None:
+            messagebox.showwarning("Limit Reached", "Only one video can be inserted per entry.")
+            return
+        self.video_path = path
+        self._refresh_previews()
+        self.status_label.configure(text=f"Video added: {path.name}", text_color="#2ecc71")
+
     def _refresh_previews(self):
         """Rebuild the thumbnail preview grid inside the drop zone box.
         
@@ -1033,7 +1073,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             widget.destroy()
         self.preview_photos.clear()
 
-        count = len(self.image_list)
+        count = len(self.image_list) + (1 if self.video_path else 0)
 
         if count == 0:
             # No images: show the drag-and-drop hint text and set minimum height
@@ -1050,7 +1090,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # Count label at the top of the box
         ctk.CTkLabel(self.drop_frame,
-                     text=f"{count} image(s) selected",
+                     text=f"{count} media item(s) selected",
                      font=ctk.CTkFont(size=12, weight="bold"),
                      text_color="#2ecc71").pack(pady=(8, 4))
 
@@ -1106,6 +1146,25 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 # Skip images that fail to load (corrupt files, etc.)
                 pass
 
+        if self.video_path:
+            i = len(self.image_list)
+            frame = ctk.CTkFrame(grid_frame, fg_color="#402222", corner_radius=6)
+            frame.grid(row=i // cols, column=i % cols, padx=4, pady=4)
+            
+            lbl = ctk.CTkLabel(frame, text="🎬\nVideo", font=ctk.CTkFont(size=24), width=100, height=80, cursor="hand2")
+            lbl.pack(padx=4, pady=(4, 0))
+            lbl.bind("<Button-1>", lambda e: self._play_video())
+            
+            name = self.video_path.name
+            ctk.CTkLabel(frame, text=name[:18], font=ctk.CTkFont(size=9), text_color="#aaa").pack(pady=(0, 1))
+            
+            if self.current_mode == "review":
+                ctk.CTkLabel(frame, text="🔍 Click to play", font=ctk.CTkFont(size=9), text_color="#666").pack(pady=(0, 1))
+                
+            rm_btn = ctk.CTkButton(frame, text="x", width=26, height=20, font=ctk.CTkFont(size=10),
+                                    fg_color="#e74c3c", hover_color="#c0392b", command=self._remove_video)
+            rm_btn.pack(pady=(0, 4))
+
     def _show_image_popup(self, index):
         """Open a popup window to view the selected image at full size.
 
@@ -1157,6 +1216,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.CTkButton(popup, text="Close", width=100, height=30,
                       command=popup.destroy).pack(pady=(0, 10))
 
+    def _play_video(self):
+        if not self.video_path: return
+        path_str = str(self.video_path)
+        try:
+            if platform.system() == "Darwin":
+                subprocess.call(('open', path_str))
+            elif platform.system() == "Windows":
+                os.startfile(path_str)
+            else:
+                subprocess.call(('xdg-open', path_str))
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not play video: {e}")
+
     def _remove_image(self, index):
         """Remove a single image from the image list by its index.
         
@@ -1170,11 +1242,17 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self._refresh_previews()
             self.status_label.configure(text="Image removed", text_color="#888")
 
-    def _remove_all_images(self):
-        """Remove all images from the image list and clear the preview area."""
-        self.image_list.clear()
+    def _remove_video(self):
+        self.video_path = None
         self._refresh_previews()
-        self.status_label.configure(text="All images removed", text_color="#888")
+        self.status_label.configure(text="Video removed", text_color="#888")
+
+    def _remove_all_images(self):
+        """Remove all images and video from the entry."""
+        self.image_list.clear()
+        self.video_path = None
+        self._refresh_previews()
+        self.status_label.configure(text="All media removed", text_color="#888")
 
     # =========================================================================
     # SAVE ENTRY TO CSV
@@ -1204,6 +1282,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         multi_cat = self.multi_cat_var.get()  # Sub-classification for fake news
         confidence_str = self.confidence_entry.get().strip()
         has_image = len(self.image_list) > 0
+        has_media = has_image or (self.video_path is not None)
 
         # --- Step 2: Validate required fields ---
         # Collect all validation errors and show them at once
@@ -1214,13 +1293,13 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             errors.append("Label (Fake/Real) must be selected.")
         if label == "Fake" and not multi_cat:
             # When the label is Fake, the annotator must select a sub-type
-            errors.append("Fake News Type (Misinformation/Rumor/Clickbait) must be selected.")
+            errors.append("Fake News Type (Misinformation/Satire/Clickbait) must be selected.")
         if not category:
             errors.append("News Category is required.")
         if not source_category:
             errors.append("Source Category is required.")
-        if not text and not has_image:
-            errors.append("At least one of Text or Image must be provided.")
+        if not text and not has_media:
+            errors.append("At least one of Text, Image, or Video must be provided.")
 
         # Validate confidence value
         confidence = 100
@@ -1239,7 +1318,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             return
 
         # Determine the multi_category value:
-        # - For Fake entries: use the annotator's selection (Misinformation/Rumor/Clickbait)
+        # - For Fake entries: use the annotator's selection (Misinformation/Satire/Clickbait)
         # - For Real entries: automatically set to "Real"
         if label == "Real":
             multi_cat = "Real"
@@ -1305,6 +1384,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             # Join multiple image paths with semicolons for the CSV column
             # Example: "images/Fake_00001_uuid_Faysal.jpg;images/Fake_00002_uuid_Faysal.png"
             image_path_str = ";".join(image_rel_paths)
+            
+            video_rel_path = ""
+            if self.video_path:
+                vid_count = get_video_count() + 1
+                ext = self.video_path.suffix.lower()
+                vid_filename = f"{label}_{vid_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                vid_dest = VIDEOS_DIR / vid_filename
+                shutil.copy2(self.video_path, vid_dest)
+                video_rel_path = f"videos/{vid_filename}"
     
             # --- Step 6: Append the entry as a new row in the CSV ---
             file_has_content = CSV_PATH.exists() and CSV_PATH.stat().st_size > 0
@@ -1319,6 +1407,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "heading": heading,
                     "text": text,
                     "image_path": image_path_str,
+                    "video_path": video_rel_path,
                     "label": label,
                     "multi_category": multi_cat,
                     "source": source,
@@ -1788,9 +1877,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             total = len(records)
             fake = sum(1 for r in records if (r.get("label") or "") == "Fake")
             real = sum(1 for r in records if (r.get("label") or "") == "Real")
-            sub = {"Misinformation": 0, "Rumor": 0, "Clickbait": 0}
+            sub = {"Misinformation": 0, "Satire": 0, "Clickbait": 0}
             news_cats = {}
             img_count = 0
+            vid_count = 0
             only_image = 0
             only_text = 0
             both_text_image = 0
@@ -1805,6 +1895,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 img_list = [p for p in ip.split(";") if p.strip()]
                 if ip:
                     img_count += len(img_list)
+                vp = (r.get("video_path") or "").strip()
+                if vp:
+                    vid_count += 1
                 
                 # Content breakdown
                 has_text = bool((r.get("text") or "").strip())
@@ -1819,6 +1912,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         else:
             counts = get_label_counts()
             img_count = get_image_count()
+            vid_count = get_video_count()
             total = counts["total"]
             fake = counts["fake"]
             real = counts["real"]
@@ -1851,13 +1945,14 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Subcategory counts
         if not use_filtered or sub["Misinformation"] > 0:
             self._create_stat_badge(self.stats_frame, "Misinfo", sub["Misinformation"], "#e67e22")
-        if not use_filtered or sub["Rumor"] > 0:
-            self._create_stat_badge(self.stats_frame, "Rumor", sub["Rumor"], "#9b59b6")
+        if not use_filtered or sub["Satire"] > 0:
+            self._create_stat_badge(self.stats_frame, "Satire", sub["Satire"], "#9b59b6")
         if not use_filtered or sub["Clickbait"] > 0:
             self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
         
         # Content breakdown
         self._create_stat_badge(self.stats_frame, "Images", img_count, "#1abc9c")
+        self._create_stat_badge(self.stats_frame, "Videos", vid_count, "#1abc9c")
         if not use_filtered or only_text > 0:
             self._create_stat_badge(self.stats_frame, "Text Only", only_text, "#34495e")
         if not use_filtered or both_text_image > 0:
@@ -2008,8 +2103,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.confidence_entry.delete(0, "end")
         self.confidence_entry.insert(0, record.get("annotation_confidence") or "100")
 
-        # Load images referenced in the record
+        # Load images and video referenced in the record
         self.image_list.clear()
+        self.video_path = None
+        
+        video_path_str = record.get("video_path") or ""
+        if video_path_str:
+            full_vid_path = SCRIPT_DIR / video_path_str
+            if full_vid_path.exists():
+                self.video_path = full_vid_path
         image_paths = record.get("image_path") or ""
         if image_paths:
             for rel_path in image_paths.split(";"):
@@ -2071,6 +2173,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                         changed = True
                         break
                 
+            if not changed:
+                orig_video = (record.get("video_path") or "").strip().replace("\\", "/")
+                current_video = ""
+                if self.video_path:
+                    try:
+                        current_video = str(self.video_path.relative_to(SCRIPT_DIR)).replace("\\", "/")
+                    except ValueError:
+                        changed = True # It's a new external video
+                
+                if not changed and orig_video != current_video:
+                    changed = True
+
         if not changed:
             return True
             
@@ -2160,6 +2274,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         multi_cat = self.multi_cat_var.get()
         confidence_str = self.confidence_entry.get().strip()
         has_image = len(self.image_list) > 0
+        has_media = has_image or (self.video_path is not None)
 
         # Validate required fields
         errors = []
@@ -2173,8 +2288,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             errors.append("News Category is required.")
         if not source_category:
             errors.append("Source Category is required.")
-        if not text and not has_image:
-            errors.append("At least one of Text or Image must be provided.")
+        if not text and not has_media:
+            errors.append("At least one of Text, Image, or Video must be provided.")
 
         confidence = 100
         if confidence_str:
@@ -2221,6 +2336,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     src_img.save(img_dest)
                     image_rel_paths.append(f"images/{img_filename}")
     
+            video_rel_path = ""
+            if self.video_path:
+                try:
+                    rel = self.video_path.relative_to(SCRIPT_DIR)
+                    video_rel_path = str(rel).replace("\\", "/")
+                except ValueError:
+                    vid_count = get_video_count() + 1
+                    ext = self.video_path.suffix.lower()
+                    vid_filename = f"{label}_{vid_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
+                    vid_dest = VIDEOS_DIR / vid_filename
+                    shutil.copy2(self.video_path, vid_dest)
+                    video_rel_path = f"videos/{vid_filename}"
+    
             # Update the in-memory record
             record["annotator"] = annotator
             record["label"] = label
@@ -2233,6 +2361,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             record["annotation_confidence"] = str(confidence)
             record["additional_notes"] = self.notes_entry.get("0.0", "end-1c").strip()
             record["image_path"] = ";".join(image_rel_paths)
+            record["video_path"] = video_rel_path
             if "timestamp" not in record or not record.get("timestamp"):
                 record["timestamp"] = datetime.now().isoformat()
     
@@ -2314,6 +2443,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             "confidence": self.confidence_entry.get().strip(),
             "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
             "images": list(self.image_list),
+            "video": self.video_path,
         }
 
     def _restore_draft(self):
@@ -2364,6 +2494,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.notes_entry.insert("0.0", notes)
 
         self.image_list = draft["images"]
+        self.video_path = draft.get("video")
         self._refresh_previews()
 
     def _get_resource_path(self, relative_path):

@@ -1,6 +1,6 @@
 # Fake News Dataset Annotator
 
-A standalone GUI tool for collecting a multimodal fake news detection dataset. Multiple annotators can use this tool to enter news text, attach images, classify entries as Fake or Real, and specify the type of fake news. All data is saved in a structured CSV file with images stored locally.
+A standalone GUI tool for collecting a multimodal fake news detection dataset. Multiple annotators can use this tool to enter news text, attach images and video, classify entries as Fake or Real, and specify the type of fake news. All data is saved in a structured CSV file with images stored locally.
 
 **No coding knowledge required** — download a single file, double-click, and start annotating.
 
@@ -70,16 +70,16 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
 
 1. **Enter your name** in the "Annotator Name" field (saved automatically for next time)
 2. **Select a label**: click either **Fake** or **Real** (required)
-3. **If Fake**: select the **Fake News Type** — Misinformation, Rumor, or Clickbait (required for Fake entries)
+3. **If Fake**: select the **Fake News Type** — Misinformation, Satire, or Clickbait (required for Fake entries)
 4. **Select News Category** from the dropdown — Politics, Health, Science, etc. (required)
 5. **Select Source Category** from the dropdown — News Channel, Facebook, Twitter, etc. (required)
 6. **Enter Source Link** — paste the URL where the news was found (optional)
 7. **Enter Heading** — the headline or title of the news (optional)
 8. **Enter the news text** in the text area (required if no image)
-9. **Add images** using one of three methods (required if no text):
-   - Click **"Browse Images"** to select files
+9. **Add media (images/video)** using one of three methods (required if no text):
+   - Click **"Browse"** to select image or video files
    - Click **"Paste from Clipboard"** to paste a screenshot
-   - Drag and drop images into the drop zone
+   - Drag and drop images or a video into the drop zone
 10. **Add Additional Notes** (optional) — for annotator use only, e.g., personal notes or remarks outside of classification
 11. Click **"💾 Save Entry"**
 12. A confirmation popup will appear. Fields are cleared for the next entry.
@@ -91,7 +91,7 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
 3. You can instantly jump to a record by clicking the record number, typing a new number, and pressing Enter.
 4. **Edit entries**: Make changes to any field and click **"🔄 Update Entry"**. (If you try to navigate away without saving, the app will warn you!)
 5. **Delete entries**: Click the trash can icon at the bottom right to permanently remove an entry.
-6. **View Images**: Click on any small image thumbnail to view it in a larger, full-resolution popup window.
+6. **View Media**: Click on any thumbnail to view the image in full resolution or play the video in your system player.
 
 ### Validation Rules
 
@@ -102,7 +102,7 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
 - **Source Category** is required
 - At least **text or image** must be provided
 - If text is fewer than 10 words, a warning will appear (you can still save)
-- Multiple images can be attached to a single entry
+- Multiple images can be attached, but only one video per entry.
 
 ---
 
@@ -129,8 +129,9 @@ YourFolder/
 | `heading`               | Optional headline / title of the news item                            |
 | `text`                  | News content body                                                     |
 | `image_path`            | Relative path(s) to image(s), separated by `;` if multiple            |
+| `video_path`            | Relative path to a video file (optional)                              |
 | `label`                 | `Fake` or `Real`                                                      |
-| `multi_category`        | Fake news sub-type (`Misinformation`, `Rumor`, `Clickbait`) or `Real` |
+| `multi_category`        | Fake news sub-type (`Misinformation`, `Satire`, `Clickbait`) or `Real` |
 | `source`                | Source link / URL (optional)                                          |
 | `source_category`       | Platform where news was found (e.g., `Facebook`, `News Channel`)      |
 | `category`              | News topic category (e.g., `Politics`, `Health`)                      |
@@ -248,7 +249,7 @@ News Channel, Newspaper, Facebook, Twitter, Instagram, Reddit, YouTube, Blog, We
 ### Fake News Types (Multi-Category)
 
 - **Misinformation** — False information spread without intent to deceive
-- **Rumor** — Unverified claims spread through informal channels
+- **Satire** — Use of humor, irony, or exaggeration to ridicule (often mistaken as real news)
 - **Clickbait** — Misleading headlines designed to attract clicks
 
 ---
