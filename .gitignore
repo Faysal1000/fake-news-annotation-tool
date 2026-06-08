@@ -14,6 +14,7 @@ dist/
 # Dataset files (created by the tool at runtime)
 dataset.csv
 images/
+videos/
 .annotator_config.json
 
 # IDE
