@@ -58,7 +58,7 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
      ```
    - Go to the `Fake News Dataset` folder on your Desktop and double-click the file, or run `./FakeNewsAnnotator-Linux` to launch the tool.
 
-The tool will automatically create `dataset.csv`, `images/` folder, and a config file **in the same folder** where the executable is located.
+The tool will automatically create `dataset.csv`, `images/` and `videos/` folders, and a config file **in the same folder** where the executable is located.
 
 ---
 
@@ -115,9 +115,11 @@ YourFolder/
 ├── FakeNewsAnnotator.exe    # The tool (or .app / Linux binary)
 ├── dataset.csv              # Your annotations (auto-created)
 ├── .annotator_config.json   # Remembers your name (auto-created)
-└── images/                  # Saved images (auto-created)
-    ├── Fake_00001_uuid_YourName.jpg
-    ├── Real_00002_uuid_YourName.png
+├── images/                  # Saved images (auto-created)
+│   ├── Fake_00001_uuid_YourName.jpg
+│   └── ...
+└── videos/                  # Saved videos (auto-created)
+    ├── Fake_00002_uuid_YourName.mp4
     └── ...
 ```
 
@@ -140,9 +142,9 @@ YourFolder/
 | `additional_notes`      | Annotator's internal notes (e.g., personal remarks outside classification)    |
 | `timestamp`             | ISO-format datetime when the entry was saved                          |
 
-### Image Naming Convention
+### Image & Video Naming Convention
 
-Images are saved with this naming pattern:
+Images and videos are saved with this naming pattern:
 
 ```
 {Label}_{count}_{uuid}_{annotator}.{extension}
@@ -158,8 +160,9 @@ When you are done annotating, send these to the project lead:
 
 1. Your `dataset.csv` file
 2. Your entire `images/` folder
+3. Your entire `videos/` folder
 
-Keep the folder structure intact so the image paths in the CSV remain valid.
+Keep the folder structure intact so the media paths in the CSV remain valid.
 
 ---
 
@@ -168,24 +171,27 @@ Keep the folder structure intact so the image paths in the CSV remain valid.
 Once multiple annotators have submitted their data, the project lead can easily combine all their work into one master dataset using the `aggregate_datasets.py` script.
 
 1. Create a master folder (e.g., `all_annotators_dataset` inside the `annotator` directory).
-2. Place each annotator's entire folder (containing their `dataset.csv` and `images/` directory) inside this master folder.
+2. Place each annotator's entire folder (containing their `dataset.csv`, `images/`, and `videos/` directories) inside this master folder.
    ```text
    all_annotators_dataset/
    ├── Faysal/
    │   ├── dataset.csv
-   │   └── images/
+   │   ├── images/
+   │   └── videos/
    ├── Alice/
    │   ├── dataset.csv
-   │   └── images/
+   │   ├── images/
+   │   └── videos/
    └── Bob/
        ├── dataset.csv
-       └── images/
+       ├── images/
+       └── videos/
    ```
 3. Run the aggregation script from the terminal:
    ```bash
    python annotator/aggregate_datasets.py
    ```
-4. The script will prompt you for the path to the master folder and the desired output locations (you can just press Enter to accept the defaults). It will automatically merge all CSV files into a single `dataset.csv` and safely copy all images into a unified `images/` folder.
+4. The script will prompt you for the path to the master folder and the desired output locations (you can just press Enter to accept the defaults). It will automatically merge all CSV files into a single `dataset.csv` and safely copy all media into unified `images/` and `videos/` folders.
 
 ---
 

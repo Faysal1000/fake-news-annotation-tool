@@ -20,17 +20,23 @@ def aggregate():
     user_output_images_dir = input(f"Enter output images directory [{default_output_images_dir}]: ").strip()
     output_images_dir = user_output_images_dir if user_output_images_dir else default_output_images_dir
 
+    default_output_videos_dir = os.path.join(script_dir, "videos")
+    user_output_videos_dir = input(f"Enter output videos directory [{default_output_videos_dir}]: ").strip()
+    output_videos_dir = user_output_videos_dir if user_output_videos_dir else default_output_videos_dir
+
     print(f"\nRoot/Script Directory: {script_dir}")
     print(f"Annotators Directory: {annotators_dir}")
     print(f"Output CSV Path: {output_csv_path}")
     print(f"Output Images Directory: {output_images_dir}")
+    print(f"Output Videos Directory: {output_videos_dir}")
 
     if not os.path.exists(annotators_dir):
         print(f"Error: Annotators directory not found at: {annotators_dir}", file=sys.stderr)
         sys.exit(1)
 
-    # Create root images directory if it doesn't exist
+    # Create root media directories if they don't exist
     os.makedirs(output_images_dir, exist_ok=True)
+    os.makedirs(output_videos_dir, exist_ok=True)
 
     # 2. Find annotator directories
     annotators = []
@@ -41,15 +47,16 @@ def aggregate():
 
     print(f"Found {len(annotators)} annotators: {', '.join(annotators)}")
 
-    # 3. Read and aggregate CSV data and copy images
+    # 3. Read and aggregate CSV data and copy media
     all_rows = []
     fieldnames = [
-        "id", "heading", "text", "image_path", "label", 
+        "id", "heading", "text", "image_path", "video_path", "label", 
         "multi_category", "source", "source_category", 
-        "category", "annotator", "annotation_confidence", "timestamp"
+        "category", "annotator", "annotation_confidence", "additional_notes", "timestamp"
     ]
 
     total_images_copied = 0
+    total_videos_copied = 0
 
     for annotator in sorted(annotators):
         annotator_dir = os.path.join(annotators_dir, annotator)
@@ -73,6 +80,23 @@ def aggregate():
             print(f"  Copied {copied_count} images from: {images_dir}")
         else:
             print(f"  Warning: Images directory not found at {images_dir}")
+
+        # Copy all videos from annotator's videos folder to root videos folder
+        videos_dir = os.path.join(annotator_dir, "videos")
+        if os.path.exists(videos_dir) and os.path.isdir(videos_dir):
+            copied_count = 0
+            for vid_file in os.listdir(videos_dir):
+                if vid_file.startswith('.'):
+                    continue
+                src_vid_path = os.path.join(videos_dir, vid_file)
+                dst_vid_path = os.path.join(output_videos_dir, vid_file)
+                if os.path.isfile(src_vid_path):
+                    shutil.copy2(src_vid_path, dst_vid_path)
+                    copied_count += 1
+                    total_videos_copied += 1
+            print(f"  Copied {copied_count} videos from: {videos_dir}")
+        else:
+            print(f"  Warning: Videos directory not found at {videos_dir}")
 
         # Read CSV rows
         if os.path.exists(csv_path) and os.path.isfile(csv_path):
@@ -111,6 +135,7 @@ def aggregate():
     print("\nAggregation complete!")
     print(f"Total rows aggregated: {len(all_rows)}")
     print(f"Total image files copied: {total_images_copied}")
+    print(f"Total video files copied: {total_videos_copied}")
 
 if __name__ == "__main__":
     aggregate()
