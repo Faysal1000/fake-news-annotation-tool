@@ -297,15 +297,17 @@ def get_label_counts():
             has_text = bool((row.get("text") or "").strip())
             image_paths = row.get("image_path") or ""
             has_image = bool([p for p in image_paths.split(";") if p.strip()])
+            has_video = bool((row.get("video_path") or "").strip())
+            has_media = has_image or has_video
             
-            if has_text and has_image:
+            if has_text and has_media:
                 result["both_text_image"] += 1
-            elif has_text and not has_image:
+            elif has_text and not has_media:
                 result["only_text"] += 1
-            elif not has_text and has_image:
+            elif not has_text and has_media:
                 result["only_image"] += 1
                 
-            if (row.get("video_path") or "").strip():
+            if has_video:
                 result["videos"] += 1
     return result
 
@@ -642,13 +644,13 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # News Heading
         self._section(self.left_col, "News Heading (optional)")
         self.heading_entry = ctk.CTkTextbox(self.left_col, height=55, font=ctk.CTkFont(size=13),
-                                            border_width=1, border_color="#555")
+                                            border_width=1, border_color="#555", undo=True)
         self.heading_entry.pack(fill="x", padx=10, pady=(0, 6))
 
         # News Text
         self._section(self.left_col, "📝 News Text (required if no image)")
         self.text_box = ctk.CTkTextbox(self.left_col, height=120, font=ctk.CTkFont(size=13),
-                                        border_width=1, border_color="#555")
+                                        border_width=1, border_color="#555", undo=True)
         self.text_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
         # Image section
@@ -812,7 +814,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                    font=ctk.CTkFont(size=10, slant="italic"), text_color="#666")
         notes_hint.pack(fill="x", padx=12, pady=(0, 2))
         self.notes_entry = ctk.CTkTextbox(self.right_col, font=ctk.CTkFont(size=13),
-                                           border_width=1, border_color="#555")
+                                           border_width=1, border_color="#555", undo=True)
         self.notes_entry.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
 
@@ -1580,9 +1582,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 def _content_type(r):
                     has_text = bool((r.get("text") or "").strip())
                     has_image = bool((r.get("image_path") or "").strip())
-                    if has_text and has_image:
+                    has_video = bool((r.get("video_path") or "").strip())
+                    has_media = has_image or has_video
+                    if has_text and has_media:
                         return "Text & Image"
-                    elif has_image:
+                    elif has_media:
                         return "Image Only"
                     elif has_text:
                         return "Text Only"
@@ -1936,11 +1940,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 # Content breakdown
                 has_text = bool((r.get("text") or "").strip())
                 has_image = bool(img_list)
-                if has_text and has_image:
+                has_media = has_image or bool(vp)
+                if has_text and has_media:
                     both_text_image += 1
-                elif has_text and not has_image:
+                elif has_text and not has_media:
                     only_text += 1
-                elif not has_text and has_image:
+                elif not has_text and has_media:
                     only_image += 1
             global_total = len(self.all_dataset_records)
         else:
