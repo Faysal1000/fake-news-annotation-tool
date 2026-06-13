@@ -1576,7 +1576,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if sel_annotators:
                 filtered = [r for r in filtered if (r.get("annotator") or "") in sel_annotators]
 
-            # Filter by content type (Image Only / Text & Image / Text Only)
+            # Filter by content type (Image Only / Text & Image / Text Only / Has Video)
             sel_content_types = filt.get("content_types")
             if sel_content_types:
                 def _content_type(r):
@@ -1591,7 +1591,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     elif has_text:
                         return "Text Only"
                     return ""
-                filtered = [r for r in filtered if _content_type(r) in sel_content_types]
+                # "Has Video" is a special content type that checks video_path independently
+                check_has_video = "Has Video" in sel_content_types
+                other_types = sel_content_types - {"Has Video"}
+                if other_types and check_has_video:
+                    filtered = [r for r in filtered if _content_type(r) in other_types or bool((r.get("video_path") or "").strip())]
+                elif check_has_video:
+                    filtered = [r for r in filtered if bool((r.get("video_path") or "").strip())]
+                else:
+                    filtered = [r for r in filtered if _content_type(r) in other_types]
+
+            # Filter by "Has Additional Notes"
+            if filt.get("has_notes"):
+                filtered = [r for r in filtered if (r.get("additional_notes") or "").strip()]
 
             # Filter by confidence interval
             min_conf = filt.get("min_conf")
@@ -1642,6 +1654,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if f.get("source_categories"): count += 1
             if f.get("annotators"): count += 1
             if f.get("content_types"): count += 1
+            if f.get("has_notes"): count += 1
             if f.get("min_conf") is not None or f.get("max_conf") is not None: count += 1
             self.filter_indicator.configure(text=f"⚡ {count} filter(s)")
             self.filter_btn.configure(fg_color="#4a3f00", border_color="#f39c12")
@@ -1739,8 +1752,22 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # ── 6. Content Type ──
         content_type_vars = _checkbox_section(scroll, "Content Type",
-                                              ["Image Only", "Text & Image", "Text Only"],
+                                              ["Image Only", "Text & Image", "Text Only", "Has Video"],
                                               cur.get("content_types", set()))
+
+        # ── 7. Has Additional Notes ──
+        has_notes_var = ctk.BooleanVar(value=cur.get("has_notes", False))
+        notes_filter_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
+                                           border_width=1, border_color="#444")
+        notes_filter_frame.pack(fill="x", pady=(6, 2))
+        ctk.CTkLabel(notes_filter_frame, text="Additional Notes",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color="#ccc").pack(anchor="w", padx=10, pady=(6, 2))
+        notes_cb_frame = ctk.CTkFrame(notes_filter_frame, fg_color="transparent")
+        notes_cb_frame.pack(fill="x", padx=10, pady=(0, 6))
+        ctk.CTkCheckBox(notes_cb_frame, text="Only show entries with additional notes",
+                        variable=has_notes_var, font=ctk.CTkFont(size=12),
+                        height=24, checkbox_width=18, checkbox_height=18).pack(anchor="w")
 
         # ── 7. Confidence Interval ──
         conf_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
@@ -1777,6 +1804,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             """Uncheck every checkbox and reset confidence to 0–100 without closing."""
             for _, var in all_checkbox_vars:
                 var.set(False)
+            has_notes_var.set(False)
             min_conf_entry.delete(0, "end")
             min_conf_entry.insert(0, "0")
             max_conf_entry.delete(0, "end")
@@ -1806,10 +1834,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 mn, mx = mx, mn
 
             # Check if any filter is actually active
+            notes_checked = has_notes_var.get()
             has_filter = (
                 bool(sel_labels) or bool(sel_types) or bool(sel_cats) or
                 bool(sel_src_cats) or bool(sel_annotators) or bool(sel_content_types) or
-                mn > 0 or mx < 100
+                notes_checked or mn > 0 or mx < 100
             )
 
             if has_filter:
@@ -1820,6 +1849,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "source_categories": sel_src_cats if sel_src_cats else None,
                     "annotators": sel_annotators if sel_annotators else None,
                     "content_types": sel_content_types if sel_content_types else None,
+                    "has_notes": notes_checked,
                     "min_conf": mn if mn > 0 else None,
                     "max_conf": mx if mx < 100 else None,
                 }
