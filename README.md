@@ -6,8 +6,11 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 <br>
 <p align="center">
-  <img src="annotator/assets/annote_mode.png" alt="Fake News Annotator - Annotate Mode" width="400">
-  <img src="annotator/assets/review_mode.png" alt="Fake News Annotator - Review Mode" width="400">
+  <img src="annotator/assets/annotate_mode.png" alt="Fake News Annotator - Annotate Mode" width="600">
+</p>
+<p align="center">
+  <img src="annotator/assets/review_mode.png" alt="Fake News Annotator - Review Mode" width="380">
+  <img src="annotator/assets/re-label_mode.png" alt="Fake News Annotator - Re-label Mode" width="380">
 </p>
 
 ---
@@ -64,7 +67,7 @@ The tool will automatically create `dataset.csv`, `images/` and `videos/` folder
 
 ## Usage
 
-The application has two modes: **Annotate** (for adding new data) and **Review** (for checking and editing existing data). You can switch between them using the toggle at the top left of the screen.
+The application has three modes: **Annotate** (for adding new data), **Review** (for checking and editing existing data), and **Re-label** (for conducting inter-rater reliability tests). You can switch between them using the dropdown switcher at the top left of the screen.
 
 ### Annotate Mode
 
@@ -93,6 +96,14 @@ The application has two modes: **Annotate** (for adding new data) and **Review**
 5. **Delete entries**: Click the trash can icon at the bottom right to permanently remove an entry.
 6. **View Media**: Click on any thumbnail to view the image in full resolution or play the video in your system player.
 
+### Re-label Mode
+
+1. Switch to **Re-label** mode via the top-left dropdown. This mode loads the `relabeling_for_kappa.csv` file for blind secondary rating.
+2. Enter your name in the **Annotator Name** field.
+3. Browse records in a read-only layout (previous annotations and metadata are hidden to prevent bias).
+4. Review the news text, headline, and media previews, choose a rating (**Fake** or **Real**), select the fake news sub-type if Fake, and click **"💾 Save Decision"**.
+5. Once saved, a green "ALREADY REVIEWED" badge will appear for the record. The app will automatically advance to the first unrated record for your username.
+
 ### Validation Rules
 
 - **Annotator name** is required
@@ -114,6 +125,7 @@ After saving entries, the following files are created **next to the executable**
 YourFolder/
 ├── FakeNewsAnnotator.exe    # The tool (or .app / Linux binary)
 ├── dataset.csv              # Your annotations (auto-created)
+├── relabeling_for_kappa.csv # Balanced inter-rater agreement sample (user-created)
 ├── .annotator_config.json   # Remembers your name (auto-created)
 ├── images/                  # Saved images (auto-created)
 │   ├── Fake_00001_uuid_YourName.jpg
@@ -192,6 +204,39 @@ Once multiple annotators have submitted their data, the project lead can easily 
    python annotator/aggregate_datasets.py
    ```
 4. The script will prompt you for the path to the master folder and the desired output locations (you can just press Enter to accept the defaults). It will automatically merge all CSV files into a single `dataset.csv` and safely copy all media into unified `images/` and `videos/` folders.
+
+---
+
+## Inter-Rater Reliability (Kappa Testing)
+
+To calculate agreement statistics (like Cohen's Kappa or Fleiss' Kappa) between multiple annotators, you can run a blind secondary rating workflow using a balanced sample subset.
+
+### 1. Generate a Balanced Sample
+
+Use the `generate_kappa_sample.py` script to extract a balanced random sample of records from the master `dataset.csv`.
+
+```bash
+python annotator/generate_kappa_sample.py
+```
+
+- **Interactive Mode**: Running the script will prompt you for the input CSV path, the number of items to sample (default `500`), and the output CSV path (default `relabeling_for_kappa.csv`).
+- **Command Line Arguments**: You can also run it with arguments:
+  ```bash
+  python annotator/generate_kappa_sample.py --n 60 --input annotator/dataset.csv --output annotator/relabeling_for_kappa.csv
+  ```
+- **Balancing Schema**: The script samples 50% Real and 50% Fake records (distributing Fake entries evenly across Misinformation, Satire, and Clickbait sub-categories).
+
+### 2. Blind Re-labeling
+
+Once `relabeling_for_kappa.csv` is generated:
+
+1. Distribute the `relabeling_for_kappa.csv` file along with the `images/` and `videos/` folders to the annotators.
+2. Annotators launch the tool and switch to **🔄 Re-label** mode via the top-left dropdown switcher.
+3. Enter your **Annotator Name** (which must match the name used in your main annotations to correctly track columns).
+4. Browse the records (which display the news headline, text, and media in a read-only view). The actual labels previously assigned are hidden.
+5. Select a rating (**Fake** or **Real**) and classification type, then click **"💾 Save Decision"**.
+6. The tool will automatically save decisions to new dynamic columns in `relabeling_for_kappa.csv` named `{annotator_name}_label` and `{annotator_name}_multi_category`.
+7. Once all annotators have completed their reviews, merge their columns into a single master reliability file to compute inter-rater agreement.
 
 ---
 

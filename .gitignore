@@ -16,6 +16,7 @@ dataset.csv
 images/
 videos/
 .annotator_config.json
+relabeling_for_kappa.csv
 
 # IDE
 .vscode/
