@@ -1,6 +1,6 @@
 """
 Build Script for Fake News Dataset Annotator
-=============================================
+
 Creates a standalone executable that includes Python and all dependencies.
 Non-technical users can run the app without installing anything.
 

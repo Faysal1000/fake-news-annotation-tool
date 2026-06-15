@@ -1,20 +1,18 @@
-#!/usr/bin/env python3
+# !/usr/bin/env python3
 """
 Fake News Dataset Annotation Tool
-==================================
-A GUI-based annotation tool for constructing a multimodal fake news
-detection dataset. Built with CustomTkinter for a modern dark-themed UI.
 
-This tool allows multiple annotators to:
-  - Enter news text content
-  - Attach one or more images (browse, paste, or drag-and-drop)
-  - Select a label (Fake / Real)
-  - Optionally specify a source and category
-  - Save everything to a CSV file with images stored in an 'images/' folder
+This is a graphical user interface application built with CustomTkinter for building 
+multimodal datasets. The tool supports three distinct workflows:
+1. Annotation Mode: Create new dataset records by entering titles/texts and 
+   attaching image and video media (via browser selection, copy/paste, or drag-and-drop).
+2. Review Mode: Load, filter, inspect, and update previously saved annotations.
+3. Re-label Mode: Perform blind secondary ratings on existing samples to calculate 
+   agreement statistics like Cohen's Kappa or Fleiss' Kappa.
 
-The CSV uses UUID-based IDs so multiple annotators can merge their datasets
-without ID collisions. Multiple images for a single entry are joined with
-semicolons (;) in the image_path column.
+All dataset records are saved locally in a portable CSV file format. Images and videos 
+are copied into dedicated media directories under unique, UUID-based file paths to 
+prevent conflicts during multi-annotator mergers.
 
 Usage:
     python annotator_tool.py
@@ -24,21 +22,17 @@ import subprocess
 import sys
 from pathlib import Path
 
-# =============================================================================
-# AUTO-INSTALL MISSING DEPENDENCIES
-# =============================================================================
-# Maps Python module names to their pip package names.
-# Before the main imports, we check if each module is importable.
-# If any are missing, we install everything from requirements.txt.
-# This lets any user run the script directly without a manual pip install step.
+# Dependency Verification
+# This map matches the internal python library names with the pip packages required.
+# Before loading the application, we check if they are importable. If they are not,
+# the tool automatically triggers pip to install them from the requirements file.
 REQUIRED = {"customtkinter": "customtkinter", "PIL": "Pillow", "tkinterdnd2": "tkinterdnd2", "requests": "requests"}
 
 def _check_and_install():
-    """Check for required packages and install them if missing.
-    
-    Iterates through the REQUIRED dict, tries to import each module,
-    and collects any that fail. If there are missing packages, it runs
-    pip install using the requirements.txt file located next to this script.
+    """
+    Checks if all required external packages are present in the python environment.
+    If packages are missing and this is not a compiled executable, runs pip to
+    install dependencies located in the script directory.
     """
     if getattr(sys, 'frozen', False):
         return
@@ -53,12 +47,10 @@ def _check_and_install():
         print(f"[INFO] Missing packages: {missing}. Installing from requirements.txt ...")
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", str(req_file)])
 
-# Run the dependency check immediately on script load
+# Run the dependency setup check on startup before main imports
 _check_and_install()
 
-# =============================================================================
-# IMPORTS (only reached after dependencies are guaranteed installed)
-# =============================================================================
+# Core application imports
 # pyrefly: ignore [missing-import]
 import customtkinter as ctk          # Modern themed tkinter widgets
 from tkinter import filedialog, messagebox  # Native file dialog and message popups
@@ -75,7 +67,9 @@ import requests                      # For version checking
 import threading                     # For non-blocking API calls
 import platform                      # For OS detection
 
-# Try to import tkinterdnd2 for drag-and-drop wrapper support
+# Safe drag-and-drop setup
+# Attempts to load tkinterdnd2 dynamically. If the library or underlying Tcl system
+# is missing, drag-and-drop features are disabled but the app will still open normally.
 try:
     # pyrefly: ignore [missing-import]
     from tkinterdnd2 import TkinterDnD, DND_FILES
@@ -85,99 +79,87 @@ except ImportError:
     dnd_available = False
     dnd_base = object
 
-# =============================================================================
-# CONSTANTS
-# =============================================================================
-# SCRIPT_DIR: The directory where data files (CSV, images, config) are stored.
-# When running as a normal Python script, this is the script's directory.
-# When running as a PyInstaller bundle, this is the directory containing
-# the executable, so that dataset.csv and images/ appear next to the .app/.exe.
+# Application paths
+# Resolve SCRIPT_DIR to point to the base folder where data files are stored.
+# If running as a PyInstaller bundle, we adjust the path to point next to
+# the executable (and handle .app bundles on macOS specifically).
 if getattr(sys, 'frozen', False):
-    # Running as a PyInstaller bundle
     _exe_path = Path(sys.executable).resolve()
-    # On macOS, if it's inside a .app bundle, navigate up 4 levels to the folder containing the .app
-    # _exe_path = .../FakeNewsAnnotator.app/Contents/MacOS/FakeNewsAnnotator
     if ".app/Contents/MacOS" in _exe_path.as_posix():
         SCRIPT_DIR = _exe_path.parents[3]
     else:
         SCRIPT_DIR = _exe_path.parent
 else:
-    # Running as a normal Python script
     SCRIPT_DIR = Path(__file__).parent.resolve()
 
-# IMAGES_DIR: Folder where all uploaded/pasted images are saved.
+# Directory for storing saved image files
 IMAGES_DIR = SCRIPT_DIR / "images"
 
-# VIDEOS_DIR: Folder where uploaded videos are saved.
+# Directory for storing saved video files
 VIDEOS_DIR = SCRIPT_DIR / "videos"
 
-# CSV_PATH: The main dataset CSV file. Created automatically on first save.
+# Path to the primary dataset file
 CSV_PATH = SCRIPT_DIR / "dataset.csv"
 
-# CONFIG_PATH: Hidden JSON file that remembers the annotator's name across sessions.
+# Configuration file storing settings like the last annotator's name
 CONFIG_PATH = SCRIPT_DIR / ".annotator_config.json"
 
-# CSV_COLUMNS: The column headers for the dataset CSV file.
-# - id:         UUID string (unique per entry, safe for merging across annotators)
-# - text:       The news text content (can be empty if image is provided)
-# - image_path: Relative path(s) to image(s), semicolon-separated if multiple
-# - label:      "Fake" or "Real" (required)
-# - source:     Where the news came from (optional)
-# - category:   Predefined topic category (optional)
-# - annotator:  Name of the person who annotated this entry
-# - annotation_confidence: Confidence level of the annotation (0-100, default 100)
-# - timestamp:  ISO-format datetime when the entry was saved
-# - heading:         Optional headline/title of the news item
-# - multi_category:  Sub-classification for fake news (Misinformation/Satire/Clickbait)
-#                    or "Real" when the label is Real
-# - source_category: Platform/medium where the news was found (required)
+# CSV file containing annotations targeted for inter-rater agreement checking
+KAPPA_CSV_PATH = SCRIPT_DIR / "relabeling_for_kappa.csv"
+
+# CSV database headers and their descriptions:
+# - id: Unique UUID string (safe for merging without risk of index collisions)
+# - heading: Optional article title or headline
+# - text: Core textual content (optional if media is attached)
+# - image_path: Local paths to files inside the images directory (semicolon-separated for multiple files)
+# - video_path: Local path to the attached video file (maximum of 1)
+# - label: Classification labels ("Fake" or "Real")
+# - multi_category: Fine-grained subtype ("Misinformation", "Satire", "Clickbait", or "Real")
+# - source: Direct URL or reference link to the original news source
+# - source_category: Category describing where the news was retrieved (e.g. platform type)
+# - category: Topic class of the news item (e.g. Politics, Science)
+# - annotator: Identifier name of the reviewer
+# - annotation_confidence: Numerical user confidence score (0 to 100)
+# - additional_notes: Optional workspace comments for the annotator's personal reference
+# - timestamp: Date and time when the record was successfully saved
 CSV_COLUMNS = ["id", "heading", "text", "image_path", "video_path", "label", "multi_category",
                "source", "source_category", "category", "annotator", "annotation_confidence",
                "additional_notes", "timestamp"]
 
-# CATEGORIES: Predefined category options for the dropdown menu.
-# First entry is empty string (no category selected).
-# "Other" is provided as a catch-all for categories not in the list.
+# Topic classification list for the news category dropdown
 CATEGORIES = ["", "Politics", "Health", "Science", "Technology", "Sports",
               "Entertainment", "Religion", "Education", "Environment",
               "International", "Miscellaneous"]
 
-# MULTI_CATEGORIES: Sub-classification options shown when the label is "Fake".
-# The annotator must pick exactly one to describe the type of fake news.
+# Classifications for news labeled as Fake
 MULTI_CATEGORIES = ["Misinformation", "Satire", "Clickbait"]
 
-# SOURCE_CATEGORIES: Predefined platform/medium options for the source category
-# dropdown. This field is required — the annotator must specify where the
-# news item was found or published.
+# Medium category dropdown options to specify where the news was found
 SOURCE_CATEGORIES = ["", "News Channel", "Newspaper", "Facebook", "Tiktok",
-                        "Twitter", "Instagram", "Reddit", "YouTube",
-                         "Blog", "Website", "Miscellaneous"]
+                     "Twitter", "Instagram", "Reddit", "YouTube",
+                     "Blog", "Website", "Miscellaneous"]
 
-# IMAGE_EXTENSIONS: Allowed image file extensions. Only these file types
-# can be browsed, pasted, or dropped into the tool.
+# Allowed file extensions for media uploads
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp")
 VIDEO_EXTENSIONS = (".mp4", ".avi", ".mov", ".mkv", ".webm")
 
-
-# =============================================================================
-# UTILITY FUNCTIONS
-# =============================================================================
+# Data utilities
 
 def ensure_dirs():
-    """Create the images directory if it does not already exist.
-    
-    Called once at startup to make sure the 'images/' folder is ready
-    before any image save operations.
+    """
+    Generates required directories for media storage if they are not already present.
     """
     IMAGES_DIR.mkdir(exist_ok=True)
     VIDEOS_DIR.mkdir(exist_ok=True)
 
 def migrate_csv_format():
-    """Check if dataset.csv uses an old format and rewrite it to match CSV_COLUMNS."""
+    """
+    Checks if the local dataset.csv is in an outdated format and updates it.
+    New columns like video_path are appended as empty strings to protect data integrity.
+    """
     if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
         return
     
-    # Check the header of the existing CSV
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         try:
@@ -188,38 +170,35 @@ def migrate_csv_format():
     if header == CSV_COLUMNS:
         return
         
-    print("[INFO] Migrating dataset.csv to new format...")
-    # Read old data mapping fields as best as possible
+    print("[INFO] Migrating dataset.csv to match the latest schema version...")
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         old_data = list(reader)
         
-    # Overwrite the CSV with new headers
     with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         writer.writeheader()
         for row in old_data:
-            # Provide default empty values for any new columns (like video_path)
             for col in CSV_COLUMNS:
                 if col not in row:
                     row[col] = ""
             writer.writerow(row)
 
-
 def generate_id():
-    """Generate a UUID4 string to use as a unique entry ID.
+    """
+    Generate a UUID4 string to use as a unique entry ID.
     
     UUID4 is random-based, so there is virtually zero chance of collision
     even when multiple annotators work independently and merge later.
     
     Returns:
-        str: A UUID string like '550e8400-e29b-41d4-a716-446655440000'
+        str: A UUID string.
     """
     return str(uuid.uuid4())
 
-
 def get_image_count():
-    """Count how many image files currently exist in the images/ folder.
+    """
+    Count how many image files currently exist in the images/ folder.
     
     Only counts files whose extension matches IMAGE_EXTENSIONS.
     Used for generating the sequential image number in filenames
@@ -232,16 +211,20 @@ def get_image_count():
         return 0
     return len([f for f in IMAGES_DIR.iterdir() if f.suffix.lower() in IMAGE_EXTENSIONS])
 
-
 def get_video_count():
-    """Count how many video files currently exist in the videos/ folder."""
+    """
+    Count how many video files currently exist in the videos/ folder.
+    
+    Returns:
+        int: Number of video files in the videos directory.
+    """
     if not VIDEOS_DIR.exists():
         return 0
     return len([f for f in VIDEOS_DIR.iterdir() if f.suffix.lower() in VIDEO_EXTENSIONS])
 
-
 def get_entry_count():
-    """Count how many data rows exist in the dataset CSV file.
+    """
+    Count how many data rows exist in the dataset CSV file.
     
     Reads the CSV with DictReader (skipping the header automatically)
     and counts the rows. Used for displaying stats in the UI.
@@ -254,9 +237,9 @@ def get_entry_count():
     with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
         return sum(1 for _ in csv.DictReader(f))
 
-
 def get_label_counts():
-    """Count entries by label (Fake/Real), fake news subcategories, and news categories.
+    """
+    Count entries by label (Fake/Real), fake news subcategories, and news categories.
     
     Reads the CSV and tallies:
       - Total entries
@@ -266,9 +249,7 @@ def get_label_counts():
       - News category breakdown (Politics, Health, etc.)
     
     Returns:
-        dict: Keys 'total', 'fake', 'real', 'fake_subcategories' (a dict
-              mapping subcategory name to count), and 'news_categories'
-              (a dict mapping category name to count).
+        dict: Keys 'total', 'fake', 'real', 'fake_subcategories', and 'news_categories'.
     """
     result = {"total": 0, "fake": 0, "real": 0,
               "fake_subcategories": {"Misinformation": 0, "Satire": 0, "Clickbait": 0},
@@ -288,12 +269,11 @@ def get_label_counts():
                     result["fake_subcategories"][sub] += 1
             elif label == "Real":
                 result["real"] += 1
-            # Count news categories
+            
             cat = (row.get("category") or "").strip()
             if cat:
                 result["news_categories"][cat] = result["news_categories"].get(cat, 0) + 1
             
-            # Content breakdown
             has_text = bool((row.get("text") or "").strip())
             image_paths = row.get("image_path") or ""
             has_image = bool([p for p in image_paths.split(";") if p.strip()])
@@ -311,9 +291,9 @@ def get_label_counts():
                 result["videos"] += 1
     return result
 
-
 def save_config(annotator_name):
-    """Persist the annotator's name to a hidden JSON config file.
+    """
+    Persist the annotator's name to a hidden JSON config file.
     
     This is called automatically whenever the annotator name field changes
     (on every keystroke and focus-out), so the name is remembered for
@@ -325,9 +305,9 @@ def save_config(annotator_name):
     with open(CONFIG_PATH, "w") as f:
         json.dump({"annotator": annotator_name}, f)
 
-
 def load_config():
-    """Load the previously saved annotator name from the config file.
+    """
+    Load the previously saved annotator name from the config file.
     
     Called once at startup to pre-fill the annotator name field.
     
@@ -339,9 +319,9 @@ def load_config():
             return json.load(f).get("annotator", "")
     return ""
 
-
 def sanitize_name(name):
-    """Convert an annotator name into a filesystem-safe string.
+    """
+    Convert an annotator name into a filesystem-safe string.
     
     Replaces any non-alphanumeric character with an underscore.
     Used when building image filenames to avoid spaces or special chars.
@@ -354,20 +334,20 @@ def sanitize_name(name):
     """
     return "".join(c if c.isalnum() else "_" for c in name.strip())
 
-
-# =============================================================================
-# MAIN APPLICATION CLASS
-# =============================================================================
+# MAIN APPLICATION CONTAINER CLASS
 
 class FlowFrame(ctk.CTkFrame):
-    """A custom frame that automatically wraps its children to a new line if they exceed the frame's width."""
+    """
+    A custom frame container that automatically wraps child widgets to the next line
+    when they exceed the available horizontal width of the frame.
+    """
     def __init__(self, master, **kwargs):
         super().__init__(master, **kwargs)
         self.bind("<Configure>", self._on_configure)
 
     def _arrange(self):
         width = self.winfo_width()
-        if width <= 10:  # Skip if frame is not fully drawn yet
+        if width <= 10:  # Skip layout calculation if frame is not fully initialized/drawn yet
             return
             
         rows = []
@@ -375,35 +355,38 @@ class FlowFrame(ctk.CTkFrame):
         x = 0
         max_height = 0
         
+        # Group child widgets into rows based on their required widths
         for child in self.winfo_children():
             cw = child.winfo_reqwidth()
             ch = child.winfo_reqheight()
             
+            # Wrap to next row if this child overflows the current width
             if x + cw > width and current_row:
-                rows.append((current_row, x - 10, max_height))  # x - 10 to remove trailing spacing
+                rows.append((current_row, x - 10, max_height))  # Subtract 10 to account for trailing space
                 current_row = []
                 x = 0
                 max_height = 0
                 
             current_row.append((child, cw, ch))
-            x += cw + 10  # Horizontal spacing between labels
+            x += cw + 10  # Horizontal spacing between elements
             max_height = max(max_height, ch)
             
         if current_row:
             rows.append((current_row, x - 10, max_height))
             
+        # Draw and position the rows and elements dynamically
         y = 0
         total_height = 0
         for row_items, row_width, row_height in rows:
             start_x = (width - row_width) // 2
-            start_x = max(0, start_x)  # Prevent negative x if width is very small
+            start_x = max(0, start_x)  # Prevent negative alignment coordinates
             
             x_offset = start_x
             for child, cw, ch in row_items:
                 child.place(x=x_offset, y=y)
                 x_offset += cw + 10
                 
-            y += row_height + 5  # Vertical spacing
+            y += row_height + 5  # Vertical spacing between rows
             total_height += row_height + 5
             
         if total_height > 0:
@@ -416,23 +399,20 @@ class FlowFrame(ctk.CTkFrame):
         self._arrange()
 
 class AnnotatorTool(ctk.CTk, dnd_base):
-    """Main GUI application for annotating fake news dataset entries.
-    
-    Inherits from customtkinter.CTk (the main window class).
-    Manages the entire annotation workflow: input fields, image handling,
-    validation, and saving to CSV.
+    """
+    The main GUI application window class.
+    Manages the application lifecycle, GUI layouts, and user interactions.
+    Handles mode switching, dataset loading/saving, and drag-and-drop bindings.
     """
 
     def __init__(self):
-        """Initialize the annotation tool window.
-        
-        Sets up the dark theme, creates the images directory,
-        initializes the image list, builds the UI, sets up drag-and-drop,
-        and binds the annotator name field to auto-save on edit.
+        """
+        Initializes the application window, sets up the styling, prepares state variables,
+        and builds the responsive user interface.
         """
         super().__init__()
 
-        # Initialize Drag & Drop if available
+        # Register Tcl/Tk drag-and-drop extension if available
         global dnd_available
         if dnd_available:
             try:
@@ -441,23 +421,19 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 print(f"[WARNING] Failed to load tkdnd Tcl library: {e}")
                 dnd_available = False
 
-        # Make sure the images/ directory exists before anything else
+        # Ensure directory structures are created and CSV is migrated on start
         ensure_dirs()
         migrate_csv_format()
 
-        # Set the visual theme to dark mode with blue accent color
+        # Apply dark styling and standard blue accent color
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        # Configure the main window title, size, and minimum dimensions
         self.title("📰 Fake News Dataset Annotator")
         
-        # --- INITIAL WINDOW SIZE SETTINGS ---
-        # You can change the initial opening size by modifying these two values:
+        # Center the window on startup
         window_width = 1200
         window_height = 850
-        
-        # Calculate screen center coordinates
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         x_cordinate = int((screen_width / 2) - (window_width / 2))
@@ -466,97 +442,95 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.geometry(f"{window_width}x{window_height}+{x_cordinate}+{y_cordinate}")
         self.minsize(900, 650)
 
-        # Track current column layout mode for responsive resizing
+        # Layout state variable for responsive scaling
         self._current_layout_mode = None
 
-        # Check for updates in the background
+        # Check for remote updates asynchronously to keep application UI responsive
         threading.Thread(target=self._check_for_updates, daemon=True).start()
 
-        # Handle window close safely
+        # Bind window close event to check for unsaved changes
         self.protocol("WM_DELETE_WINDOW", self._on_closing)
 
-        # IMAGE LIST: Stores all images attached to the current entry.
-        # Each item in the list is a tuple of (file_path, pil_image):
-        #   - (Path, None)  -> image selected from file system (path stored)
-        #   - (None, Image)  -> image pasted from clipboard (PIL object stored)
-        # This list is cleared after each save.
+        # Image list stores attached images as tuples of (file_path, PIL_image_object)
+        # Allows distinguishing between filesystem paths and clipboard images
         self.image_list = []
         
-        # VIDEO PATH: Stores the path of the selected video.
-        # Max one video can be added per entry.
+        # Video path stores the path of the selected video (maximum 1 video per record)
         self.video_path = None
 
-        # PREVIEW PHOTOS: Keeps references to ImageTk.PhotoImage objects.
-        # Tkinter requires us to hold a reference to displayed images,
-        # otherwise they get garbage collected and disappear from the UI.
+        # Holds references to PhotoImage objects so they are not garbage collected
         self.preview_photos = []
 
-        # REVIEW MODE STATE:
-        # Tracks which mode the app is in ('annotate' or 'review')
+        # Tracks media files that are referenced in the CSV but cannot be found in images/ or videos/ directories
+        self.missing_media = []
+
+        # Review Mode State
+        # Keeps track of the current application mode: 'annotate', 'review', or 'relabel'
         self.current_mode = "annotate"
-        # Holds all CSV rows loaded into memory for browsing in review mode
+        # Holds the complete list of records loaded from the dataset CSV
         self.all_dataset_records = []
-        # Holds the currently filtered subset of records
+        # Holds the active filtered subset of records based on the filter constraints
         self.dataset_records = []
-        # The currently active advanced filter settings in Review mode
-        self.advanced_filter = None  # dict with keys: labels, types, categories, annotators, min_conf, max_conf
-        # Index of the currently displayed record in review mode
+        # Active filter parameters used for restricting records shown in Review mode
+        self.advanced_filter = None  
+        # Current index in the dataset_records list being viewed
         self.current_review_index = 0
-        # Temporarily stores the user's in-progress annotation when switching modes
+        # Stores user progress draft when switching between different views
         self.draft_annotation = None
 
-        # Build all UI elements, set up drag-and-drop, and refresh stats
+        # Re-label Mode State
+        # Holds all records loaded from the kappa calculation target CSV
+        self.kappa_records = []
+        # Stores columns of the kappa CSV dynamically
+        self.kappa_csv_columns = []
+        # Current index in the kappa records list being viewed
+        self.current_kappa_index = 0
+
+        # Construct widgets, register drop areas, and initialize database statistics
         self._build_ui()
         self._setup_dnd()
         self._update_stats()
 
-        # AUTO-SAVE ANNOTATOR NAME:
-        # Whenever the user types in or tabs away from the annotator field,
-        # immediately persist the name to the config file. This way the
-        # name is remembered even if the user closes the tool without saving.
+        # Automatically save the annotator name field as the user types
         self.annotator_entry.bind("<KeyRelease>",
-            lambda e: save_config(self.annotator_entry.get().strip()) if self.current_mode == "annotate" else None)
+            lambda e: self._on_annotator_name_change())
         self.annotator_entry.bind("<FocusOut>",
-            lambda e: save_config(self.annotator_entry.get().strip()) if self.current_mode == "annotate" else None)
+            lambda e: self._on_annotator_name_change())
 
-    # =========================================================================
-    # UI CONSTRUCTION
-    # =========================================================================
+    # UI Construction Methods
 
     def _build_ui(self):
-        """Build the entire GUI layout.
-        
-        Creates a two-column responsive desktop layout:
-        - Top: stats badge cards (centered)
-        - Left column: heading, text, images
-        - Right column: form controls (annotator, label, categories, etc.)
-        - Bottom: navigation + action buttons
         """
-        # Main container (no scrolling — desktop-optimized)
+        Creates and positions all widgets inside the application window.
+        Uses a two-column desktop layout consisting of:
+        - Top Bar: mode select buttons and filter indicators
+        - Left Panel: heading, body text, and media upload zone
+        - Right Panel: classification fields (authenticity, category, confidence, source)
+        - Bottom Bar: navigation controls and action buttons
+        """
         main = ctk.CTkFrame(self, fg_color="transparent")
         main.pack(fill="both", expand=True, padx=18, pady=10)
-        self._main_frame = main  # Store reference for responsive layout
+        self._main_frame = main
 
-        # ----- TOP BAR: Mode switcher (left) + Title (center) -----
+        # Top Bar containing Mode Selector and main header label
         top_bar = ctk.CTkFrame(main, fg_color="transparent", height=38)
         top_bar.pack(fill="x", pady=(5, 2))
-        top_bar.pack_propagate(False)  # keep fixed height for place() centering
+        top_bar.pack_propagate(False)
 
         self.mode_switcher = ctk.CTkSegmentedButton(
-            top_bar, values=["📝 Annotate", "🔍 Review"],
+            top_bar, values=["📝 Annotate", "🔍 Review", "🔄 Re-label"],
             command=self._toggle_mode,
             font=ctk.CTkFont(size=12),
             selected_color="#1f6aa5", selected_hover_color="#144870",
-            height=28, width=180
+            height=28, width=270
         )
         self.mode_switcher.set("📝 Annotate")
         self.mode_switcher.pack(side="left", padx=(0, 10))
         
-        # Filter button + indicator on the right (hidden by default, shown in Review mode)
+        # Filter controls for Review mode
         self.filter_indicator = ctk.CTkLabel(top_bar, text="",
                                               font=ctk.CTkFont(size=12),
                                               text_color="#f39c12")
-        # Not packed yet — shown only in Review mode
         
         self.filter_btn = ctk.CTkButton(top_bar, text="🔍 Filter", command=self._show_filter_popup,
                                          width=80, height=32,
@@ -564,29 +538,27 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                          fg_color="#2d2d5e", hover_color="#3d3d7e",
                                          border_width=1, border_color="#555",
                                          corner_radius=6)
-        # Not packed yet — shown only in Review mode
 
         ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
                      font=ctk.CTkFont(size=22, weight="bold")).place(relx=0.5, rely=0.5, anchor="center")
 
-        # ----- Stats bar: colored badge cards -----
+        # Top stats cards area
         self.stats_frame = FlowFrame(main, fg_color="transparent")
         self.stats_frame.pack(fill="x", pady=(4, 2))
 
-        # ----- Category stats bar: news category counts -----
+        # Secondary categories stats cards
         self.category_stats_frame = FlowFrame(main, fg_color="transparent")
         self.category_stats_frame.pack(fill="x", pady=(0, 6))
 
-        # ----- BOTTOM BAR: Grid layout with 2 equal columns -----
+        # Bottom controls container
         self.bottom_bar = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=8,
                                         border_width=1, border_color="#333")
         self.bottom_bar.pack(side="bottom", fill="x", pady=(6, 0))
-        self.bottom_bar.columnconfigure(0, weight=1, uniform="btm")  # left half (nav)
-        self.bottom_bar.columnconfigure(1, weight=1, uniform="btm")  # right half (buttons)
+        self.bottom_bar.columnconfigure(0, weight=1, uniform="btm")
+        self.bottom_bar.columnconfigure(1, weight=1, uniform="btm")
 
-        # Left side: review navigation (hidden by default, placed via grid when needed)
+        # Left controls (Navigation)
         self.nav_frame = ctk.CTkFrame(self.bottom_bar, fg_color="transparent")
-        # Not placed yet — shown only in Review mode via grid()
 
         self.prev_btn = ctk.CTkButton(self.nav_frame, text="← Previous",
                                        command=self._prev_record, width=100, height=32,
@@ -595,7 +567,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                        border_color="#555", hover_color="#333")
         self.prev_btn.pack(side="left", padx=(0, 10))
 
-        # Center: record counter
+        # Page index / total counter block
         self.record_center_frame = ctk.CTkFrame(self.nav_frame, fg_color="transparent")
         self.record_center_frame.pack(side="left", expand=True)
         
@@ -614,7 +586,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                        fg_color="#1f6aa5", hover_color="#144870")
         self.next_btn.pack(side="left", padx=(10, 0))
 
-        # Action buttons — always in right column only
+        # Right controls (Save / Clear actions)
         self.action_btn_frame = ctk.CTkFrame(self.bottom_bar, fg_color="transparent")
         self.action_btn_frame.grid(row=0, column=1, sticky="ew", padx=(8, 8), pady=6)
 
@@ -632,28 +604,26 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                        border_width=1, border_color="#666")
         self.secondary_btn.pack(side="left")
 
-        # =====================================================================
-        # TWO-COLUMN CONTENT AREA (fills remaining space between stats & bottom)
-        # =====================================================================
+        # Two Column Main Area
         self.content_container = ctk.CTkFrame(main, fg_color="transparent")
         self.content_container.pack(fill="both", expand=True, pady=(4, 0))
 
-        # --- LEFT COLUMN: Heading + Text + Images ---
+        # Left Column containing input text area and drop targets
         self.left_col = ctk.CTkFrame(self.content_container, fg_color="transparent")
 
-        # News Heading
+        # Heading entry field
         self._section(self.left_col, "News Heading (optional)")
         self.heading_entry = ctk.CTkTextbox(self.left_col, height=55, font=ctk.CTkFont(size=13),
                                             border_width=1, border_color="#555", undo=True)
         self.heading_entry.pack(fill="x", padx=10, pady=(0, 6))
 
-        # News Text
+        # Article text entry field
         self._section(self.left_col, "📝 News Text (required if no image)")
         self.text_box = ctk.CTkTextbox(self.left_col, height=120, font=ctk.CTkFont(size=13),
                                         border_width=1, border_color="#555", undo=True)
         self.text_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
 
-        # Image section
+        # Upload / Pasting controls
         self._section(self.left_col, "🖼️ Images & Video (required if no text)")
         img_btn_frame = ctk.CTkFrame(self.left_col, fg_color="transparent")
         img_btn_frame.pack(fill="x", padx=10, pady=(0, 4))
@@ -666,7 +636,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                        width=110, height=26, font=ctk.CTkFont(size=12),
                        fg_color="#e74c3c", hover_color="#c0392b").pack(side="left")
 
-        # Drag and drop zone / image preview area
+        # Main drop target frame for Drag and Drop operations
         self.drop_frame = ctk.CTkFrame(self.left_col, height=80, border_width=2,
                                         border_color="#666", fg_color="#1a1a2e")
         self.drop_frame.pack(fill="both", padx=10, pady=(4, 6))
@@ -676,11 +646,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                         font=ctk.CTkFont(size=13), text_color="#888")
         self.drop_label.pack(expand=True, fill="both", pady=15)
 
-        # --- RIGHT COLUMN: Form controls ---
+        # Right Column containing categorical selectors and validation constraints
         self.right_col = ctk.CTkFrame(self.content_container, fg_color="#1a1a2e",
                                        corner_radius=10, border_width=1, border_color="#333")
 
-        # Annotator name
+        # Annotator Name
         self._section(self.right_col, "Annotator name *")
         self.annotator_entry = ctk.CTkEntry(self.right_col, placeholder_text="Your name", height=32)
         self.annotator_entry.pack(fill="x", padx=12, pady=(0, 8))
@@ -689,14 +659,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if saved_name:
             self.annotator_entry.insert(0, saved_name)
 
-        # News Label (Fake / Real) — toggle-style buttons
+        # Authenticity Selectors
         self._section(self.right_col, "News Authenticity *")
         label_frame = ctk.CTkFrame(self.right_col, fg_color="transparent")
         label_frame.pack(fill="x", padx=12, pady=(0, 6))
+        label_frame.grid_columnconfigure((0, 1), weight=1, uniform="toggles")
 
         self.label_var = ctk.StringVar(value="")
 
-        # Fake toggle button (left half)
+        # Fake authenticity option
         self.fake_toggle_btn = ctk.CTkButton(
             label_frame, text="❌  FAKE",
             font=ctk.CTkFont(size=14, weight="bold"),
@@ -706,9 +677,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             text_color="#888",
             command=lambda: self._set_label("Fake")
         )
-        self.fake_toggle_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.fake_toggle_btn.grid(row=0, column=0, sticky="ew", padx=(0, 4))
 
-        # Real toggle button (right half)
+        # Real authenticity option
         self.real_toggle_btn = ctk.CTkButton(
             label_frame, text="✅  REAL",
             font=ctk.CTkFont(size=14, weight="bold"),
@@ -718,14 +689,26 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             text_color="#888",
             command=lambda: self._set_label("Real")
         )
-        self.real_toggle_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.real_toggle_btn.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        # Multi-category sub-classification (shown only for Fake)
+        # Multi-category selection subframe (displayed for Fake news only)
         self.multi_cat_frame = ctk.CTkFrame(self.right_col, fg_color="#222244",
                                              corner_radius=8, border_width=1,
                                              border_color="#444")
-        # Initially hidden
         self.multi_cat_var = ctk.StringVar(value="")
+
+        # Done review badge container for kappa mode
+        self.done_indicator_frame = ctk.CTkFrame(self.right_col, fg_color="transparent")
+        self.done_indicator_frame.bind("<Configure>", self._on_done_indicator_configure)
+        
+        self.reviewed_badge_img = None
+        try:
+            r_img = Image.open(SCRIPT_DIR / "reviewed_badge.png")
+            self.reviewed_badge_img = ctk.CTkImage(light_image=r_img, dark_image=r_img, size=(220, 220))
+        except Exception: pass
+
+        self.done_label = ctk.CTkLabel(self.done_indicator_frame, text="")
+        self.done_label.pack(expand=True, fill="both", pady=10)
 
         mc_header = ctk.CTkFrame(self.multi_cat_frame, fg_color="transparent")
         mc_header.pack(fill="x", padx=10, pady=(8, 4))
@@ -757,13 +740,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             fg_color="#e74c3c", hover_color="#c0392b")
         self.radio_clickbait.pack(side="left")
 
-        # News Category + Source Category (side by side on one row)
+        # Main news and platform category selectors
         cat_row_header = ctk.CTkFrame(self.right_col, fg_color="transparent")
         cat_row_header.pack(fill="x", padx=10, pady=(10, 3))
         cat_row_header.columnconfigure(0, weight=1, uniform="catcol")
         cat_row_header.columnconfigure(1, weight=1, uniform="catcol")
 
-        # News Category label
         nc_lbl_frame = ctk.CTkFrame(cat_row_header, fg_color="transparent")
         nc_lbl_frame.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(nc_lbl_frame, text="News Category",
@@ -771,7 +753,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.CTkLabel(nc_lbl_frame, text=" *",
                      font=ctk.CTkFont(size=15, weight="bold"), text_color="#e74c3c").pack(side="left")
 
-        # Source Category label
         sc_lbl_frame = ctk.CTkFrame(cat_row_header, fg_color="transparent")
         sc_lbl_frame.grid(row=0, column=1, sticky="w", padx=(8, 0))
         ctk.CTkLabel(sc_lbl_frame, text="Source Category",
@@ -779,7 +760,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.CTkLabel(sc_lbl_frame, text=" *",
                      font=ctk.CTkFont(size=15, weight="bold"), text_color="#e74c3c").pack(side="left")
 
-        # Dropdown row
         cat_row = ctk.CTkFrame(self.right_col, fg_color="transparent")
         cat_row.pack(fill="x", padx=12, pady=(0, 8))
         cat_row.columnconfigure(0, weight=1, uniform="catdrop")
@@ -797,18 +777,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                                   dynamic_resizing=False)
         self.source_cat_menu.grid(row=0, column=1, sticky="ew", padx=(4, 0))
 
-        # Confidence (full width)
+        # Confidence rating
         self._section(self.right_col, "Confidence (%)")
         self.confidence_entry = ctk.CTkEntry(self.right_col, placeholder_text="100", height=32, justify="center")
         self.confidence_entry.pack(fill="x", padx=12, pady=(0, 8))
         self.confidence_entry.insert(0, "100")
 
-        # Source Link (single line)
+        # News Source link
         self._section(self.right_col, "Source Link")
         self.source_entry = ctk.CTkEntry(self.right_col, placeholder_text="Paste URL or link here", height=32)
         self.source_entry.pack(fill="x", padx=12, pady=(0, 8))
 
-        # Additional Notes (expandable, fills remaining space)
+        # Internal Annotator notes textbox
         self._section(self.right_col, "Additional Notes")
         notes_hint = ctk.CTkLabel(self.right_col, text="For annotator use only — e.g., personal notes or remarks outside of classification",
                                    font=ctk.CTkFont(size=10, slant="italic"), text_color="#666")
@@ -817,23 +797,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                                            border_width=1, border_color="#555", undo=True)
         self.notes_entry.pack(fill="both", expand=True, padx=12, pady=(0, 8))
 
-
-        # =====================================================================
-        # RESPONSIVE LAYOUT: Arrange columns based on window width
-        # =====================================================================
+        # Establish base columns
         self._arrange_columns()
         self.content_container.bind("<Configure>", self._on_content_resize)
 
-        # ----- STATUS BAR (REMOVED) -----
         class DummyLabel:
             def configure(self, *args, **kwargs): pass
         self.status_label = DummyLabel()
 
     def _section(self, parent, text):
-        """Create a bold section heading label in the UI.
-        
-        Used to visually separate different input areas (Annotator, Label, etc.).
-        If the text ends with '*', it displays the '*' in red color.
+        """
+        Creates a bold text header to separate sections inside the control panel.
+        Displays trailing '*' symbols in standard red to denote required fields.
         """
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=10, pady=(10, 3))
@@ -849,7 +824,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             lbl.pack(side="left")
 
     def _inline_label(self, parent, text, width=140):
-        """Create a fixed-width frame for inline labels to ensure vertical alignment of inputs."""
+        """
+        Helper to construct fixed-width label wrappers for horizontal layout alignment.
+        """
         frame = ctk.CTkFrame(parent, width=width, height=36, fg_color="transparent")
         frame.pack_propagate(False)
         frame.pack(side="left", padx=(0, 10))
@@ -861,12 +838,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         else:
             ctk.CTkLabel(frame, text=text, font=ctk.CTkFont(size=13)).pack(side="left")
 
-    # =========================================================================
-    # TWO-COLUMN LAYOUT
-    # =========================================================================
+    # Column Grid Resizing
 
     def _arrange_columns(self):
-        """Arrange the left and right columns in a fixed two-column grid layout."""
+        """
+        Fixes the content container to use a balanced two-column grid.
+        """
         self.content_container.columnconfigure(0, weight=1, uniform="col")
         self.content_container.columnconfigure(1, weight=1, uniform="col")
         self.content_container.rowconfigure(0, weight=1)
@@ -875,25 +852,36 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.right_col.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
 
     def _on_content_resize(self, event=None):
-        """No-op: layout is always two columns."""
         pass
 
-    # =========================================================================
-    # LABEL CHANGE HANDLER
-    # =========================================================================
+    def _on_done_indicator_configure(self, event):
+        """
+        Handler to scale the reviewed check badge dynamically with window resizing constraints.
+        """
+        if not self.reviewed_badge_img:
+            return
+        w = event.width
+        h = event.height
+        size = min(w - 24, h - 30, 220)
+        size = max(100, size)
+        if self.reviewed_badge_img.cget("size") != (size, size):
+            self.reviewed_badge_img.configure(size=(size, size))
+
+    # Event Handlers for UI Elements
 
     def _set_label(self, value):
-        """Set the label value and update toggle button visuals.
-        
-        Called when the user clicks the FAKE or REAL toggle button.
-        Updates the button styling to show which is selected.
+        """
+        Sets the active label variable (Fake / Real) and updates button highlighting.
         """
         self.label_var.set(value)
         self._update_label_toggles()
         self._on_label_change()
 
     def _update_label_toggles(self):
-        """Update the visual state of the Fake/Real toggle buttons."""
+        """
+        Dynamically applies color themes to authenticity select toggles when selected.
+        Red highlighting is used for Fake authenticity, green for Real authenticity.
+        """
         selected = self.label_var.get()
         if selected == "Fake":
             self.fake_toggle_btn.configure(
@@ -914,7 +902,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 text_color="#888"
             )
         else:
-            # Neither selected — reset both
             self.fake_toggle_btn.configure(
                 fg_color="transparent", border_color="#555",
                 text_color="#888"
@@ -925,43 +912,43 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             )
 
     def _on_label_change(self):
-        """Show or hide the multi-category panel based on the selected label.
-        
-        Called whenever the user clicks a label toggle button (Fake or Real).
-        # MULTI-CATEGORY: Only relevant if label is "Fake", in which case the
-        #          annotator can pick a fake news sub-type (Misinformation/Satire/Clickbait).
-        - If "Real" is selected: the multi-category frame is hidden and the
-          multi_cat_var is cleared (multi_category will be set to "Real" on save).
+        """
+        Displays the multi-category type selector frame if Fake is selected.
+        Hides the category type frame and resets options if Real is selected.
         """
         if self.label_var.get() == "Fake":
-            # Show the multi-category sub-classification panel after the label frame
-            self.multi_cat_frame.pack(fill="x", padx=12, pady=(0, 8),
-                                       after=self.fake_toggle_btn.master)
+            if self.current_mode == "relabel":
+                self.multi_cat_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8),
+                                           after=self.fake_toggle_btn.master)
+            else:
+                self.multi_cat_frame.pack(fill="x", expand=False, padx=12, pady=(0, 8),
+                                           after=self.fake_toggle_btn.master)
         else:
-            # Hide the panel and reset the selection
             self.multi_cat_frame.pack_forget()
             self.multi_cat_var.set("")
         self._update_label_toggles()
 
-    # =========================================================================
-    # DRAG AND DROP SUPPORT
-    # =========================================================================
+    def _on_annotator_name_change(self):
+        """
+        Saves user credentials to local settings files and refreshes dashboard statistics when modified.
+        """
+        name = self.annotator_entry.get().strip()
+        if self.current_mode == "annotate":
+            save_config(name)
+        elif self.current_mode == "relabel":
+            save_config(name)
+            self._update_kappa_stats()
+
+    # Drag and Drop Implementation
 
     def _setup_dnd(self):
-        """Attempt to set up drag-and-drop support for the drop zone.
-        
-        Uses tkinterdnd2 which requires the tkdnd Tcl package.
-        If either the Python package or the Tcl extension is unavailable,
-        the drop zone shows a fallback message directing users to use
-        Browse or Paste instead. This gracefully degrades on systems
-        without drag-and-drop support.
+        """
+        Registers drop bindings for the media zone if the tkinterdnd library is loaded.
         """
         global dnd_available
         if dnd_available:
             try:
-                # Register the drop zone frame to accept file drops
                 self.drop_frame.drop_target_register(DND_FILES)
-                # Bind the drop event to our handler
                 self.drop_frame.dnd_bind('<<Drop>>', self._on_drop)
             except Exception as e:
                 print(f"[WARNING] Failed to register drop target: {e}")
@@ -971,27 +958,23 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.drop_label.configure(text="Drag & Drop not available\n(Use Browse or Paste instead)")
 
     def _on_drop(self, event):
-        """Handle files dropped onto the drag-and-drop zone.
-        
-        Parses the dropped file paths (tkdnd can provide them in different
-        formats depending on the OS), filters for valid image extensions,
-        and adds each valid image to the image list.
-        
-        Args:
-            event: The tkdnd drop event containing file path data.
         """
-        # Get the raw dropped data string
+        Processes file paths dropped into the drag-and-drop area.
+        Parses raw dropped string data to handle spaces in paths, which are typical 
+        on macOS/Windows environments and usually wrapped in curly braces by the Tcl handler.
+        It then filters the resolved paths and registers eligible image/video media.
+        """
         raw = event.data.strip()
         paths = []
         
-        # Use regex to parse paths, supporting spaces in paths wrapped in braces
+        # Regex separates paths, handling space characters enclosed in braces
         import re
         for match in re.finditer(r'\{([^{}]+)\}|(\S+)', raw):
             p = match.group(1) or match.group(2)
             if p:
                 paths.append(p.strip())
 
-        # Try to add each dropped file as an image or video
+        # Distribute file paths based on extension matches
         added = 0
         for p in paths:
             path = Path(p)
@@ -1001,18 +984,16 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             elif path.suffix.lower() in VIDEO_EXTENSIONS:
                 self._add_video_from_path(path)
                 added += 1
-        # If nothing valid was dropped, show a warning
+                
         if added == 0:
             messagebox.showwarning("Invalid File", "Please drop image or video files only.")
 
-    # =========================================================================
-    # IMAGE OPERATIONS
-    # =========================================================================
+    # Media Operations and Attachments
 
     def _browse_media(self):
-        """Open a file dialog for the user to select images or a video.
-        
-        The dialog is filtered to show valid image and video types.
+        """
+        Triggers a native file browser dialog configured with extensions for images and videos.
+        Dispatches selected items to their respective image or video handler functions.
         """
         ftypes = [
             ("All Media", " ".join(f"*{e}" for e in IMAGE_EXTENSIONS + VIDEO_EXTENSIONS)),
@@ -1028,13 +1009,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 self._add_video_from_path(p)
 
     def _paste_image(self):
-        """Grab an image from the system clipboard and add it to the image list.
-        
-        Handles two clipboard scenarios:
-        1. A PIL Image object (e.g., from a screenshot tool)
-        2. A list of file paths (e.g., copied files from Finder/Explorer)
-        
-        If no image is found in the clipboard, shows an informational message.
+        """
+        Retrieves clipboard contents. Supports both raw raster screenshots (as PIL Image objects)
+        and file lists (where files are copied directly in Explorer or Finder).
+        Displays a notification if no compatible content is discovered.
         """
         try:
             img = ImageGrab.grabclipboard()
@@ -1042,7 +1020,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 messagebox.showinfo("No Image", "No image found in clipboard.")
                 return
             if isinstance(img, list):
-                # Clipboard contains file paths (e.g., user copied files)
+                # User copied file paths directly
                 added = False
                 for f in img:
                     if Path(f).suffix.lower() in IMAGE_EXTENSIONS:
@@ -1051,8 +1029,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 if not added:
                     messagebox.showinfo("No Image", "No image file found in clipboard.")
                 return
-            # Clipboard contains a direct PIL Image (e.g., screenshot)
-            # Store as (None, pil_image) since there is no file path
+            # Raw clipboard raster data
             self.image_list.append((None, img))
             self._refresh_previews()
             self.status_label.configure(text="Image pasted from clipboard", text_color="#2ecc71")
@@ -1060,20 +1037,16 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             messagebox.showerror("Error", f"Could not paste image: {e}")
 
     def _add_image_from_path(self, path: Path):
-        """Add an image to the image list from a file path.
-        
-        Validates that the file has an allowed image extension and that
-        PIL can actually open it (not a corrupt/fake file). If valid,
-        appends (path, None) to the image list and refreshes previews.
-        
-        Args:
-            path: Path object pointing to the image file.
+        """
+        Performs structural checks on image files from path. Verifies that the file suffix
+        matches eligible types and confirms the file is readable by attempting to initialize PIL.
+        Stores path as a reference tuple and triggers preview updates.
         """
         if path.suffix.lower() not in IMAGE_EXTENSIONS:
             messagebox.showwarning("Invalid File", "Please select an image file only.")
             return
         try:
-            Image.open(path)  # Validate it is a real, readable image
+            Image.open(path)  
             self.image_list.append((path, None))
             self._refresh_previews()
             self.status_label.configure(text=f"Image added: {path.name}", text_color="#2ecc71")
@@ -1081,7 +1054,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             messagebox.showerror("Error", f"Could not open image: {e}")
 
     def _add_video_from_path(self, path: Path):
-        """Add a video to the entry. Max one video allowed."""
+        """
+        Validates and registers a video file. Only one video may be attached to a dataset record.
+        """
         if path.suffix.lower() not in VIDEO_EXTENSIONS:
             messagebox.showwarning("Invalid File", "Please select a video file only.")
             return
@@ -1093,26 +1068,22 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.status_label.configure(text=f"Video added: {path.name}", text_color="#2ecc71")
 
     def _refresh_previews(self):
-        """Rebuild the thumbnail preview grid inside the drop zone box.
-        
-        When no images are selected, shows the drag-and-drop hint text.
-        When images are present, replaces the hint with a thumbnail grid
-        showing each image with its filename and a remove button.
-        All previews are rendered INSIDE the drop_frame box.
-        
-        Note: We must keep references to ImageTk.PhotoImage objects in
-        self.preview_photos, otherwise Python's garbage collector will
-        destroy them and the images will disappear from the UI.
         """
-        # Clear everything inside the drop frame
+        Redraws the layout container for the drop frame.
+        When empty, displays drag instruction instructions.
+        When populated, compiles a horizontal grid listing all images, video attachments,
+        and unresolved missing-file cards (referenced in CSV but absent locally).
+        Stores references to CTkImage properties in self.preview_photos to shield objects from GC.
+        """
         for widget in self.drop_frame.winfo_children():
             widget.destroy()
         self.preview_photos.clear()
 
         count = len(self.image_list) + (1 if self.video_path else 0)
+        missing_count = len(self.missing_media) if hasattr(self, 'missing_media') else 0
+        total_display = count + missing_count
 
-        if count == 0:
-            # No images: show the drag-and-drop hint text and set minimum height
+        if total_display == 0:
             self.drop_frame.configure(height=100)
             self.drop_label = ctk.CTkLabel(self.drop_frame,
                                             text="📥 Drag & Drop image(s) here\nor use Browse / Paste buttons above",
@@ -1120,28 +1091,26 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.drop_label.pack(expand=True, fill="both", pady=20)
             return
 
-        # Images present: show count label + thumbnail grid inside the box
-        # Reset height so the frame expands to fit content
         self.drop_frame.configure(height=0)
 
-        # Count label at the top of the box
+        count_text = f"{count} media item(s) selected"
+        if missing_count > 0:
+            count_text += f"  •  ⚠️ {missing_count} file(s) missing"
+        count_color = "#e74c3c" if missing_count > 0 and count == 0 else "#2ecc71"
         ctk.CTkLabel(self.drop_frame,
-                     text=f"{count} media item(s) selected",
+                     text=count_text,
                      font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color="#2ecc71").pack(pady=(8, 4))
+                     text_color=count_color).pack(pady=(8, 4))
 
-        # Grid container for thumbnails
         grid_frame = ctk.CTkFrame(self.drop_frame, fg_color="transparent")
         grid_frame.pack(fill="x", padx=8, pady=(0, 8))
 
-        # Use small thumbnails (5 columns) for all modes, since clicking them opens the large popup
         thumb_size = (100, 80)
         cols = 5
 
-        # Create a thumbnail card for each image in a grid
+        # Render preview thumbnails for attached images
         for i, (path, pil_img) in enumerate(self.image_list):
             try:
-                # Open or copy the image and create a thumbnail
                 if path:
                     img = Image.open(path)
                 else:
@@ -1149,39 +1118,34 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 img.thumbnail(thumb_size)
                 ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
                                          size=(img.width, img.height))
-                self.preview_photos.append(ctk_photo)  # Keep reference alive
+                self.preview_photos.append(ctk_photo)  
 
-                # Create a card frame for this thumbnail
                 frame = ctk.CTkFrame(grid_frame, fg_color="#222240",
                                       corner_radius=6)
                 frame.grid(row=i // cols, column=i % cols, padx=4, pady=4)
 
-                # Display the thumbnail image (click to enlarge)
                 lbl = ctk.CTkLabel(frame, image=ctk_photo, text="", cursor="hand2")
                 lbl.pack(padx=4, pady=(4, 0))
                 lbl.bind("<Button-1>", lambda e, idx=i: self._show_image_popup(idx))
 
-                # Show the filename (truncated to 18 chars)
                 name = path.name if path else f"clipboard_{i+1}.png"
                 ctk.CTkLabel(frame, text=name[:18], font=ctk.CTkFont(size=9),
                              text_color="#aaa").pack(pady=(0, 1))
 
-                # Hint to click for full view (only in review mode)
-                if self.current_mode == "review":
+                if self.current_mode in ("review", "relabel"):
                     ctk.CTkLabel(frame, text="🔍 Click to enlarge",
                                  font=ctk.CTkFont(size=9), text_color="#666").pack(pady=(0, 1))
 
-                # Small remove button for this specific image
-                # Uses lambda with default arg to capture the current index
-                rm_btn = ctk.CTkButton(frame, text="x", width=26, height=20,
-                                        font=ctk.CTkFont(size=10),
-                                        fg_color="#e74c3c", hover_color="#c0392b",
-                                        command=lambda idx=i: self._remove_image(idx))
-                rm_btn.pack(pady=(0, 4))
+                if self.current_mode != "relabel":
+                    rm_btn = ctk.CTkButton(frame, text="x", width=26, height=20,
+                                            font=ctk.CTkFont(size=10),
+                                            fg_color="#e74c3c", hover_color="#c0392b",
+                                            command=lambda idx=i: self._remove_image(idx))
+                    rm_btn.pack(pady=(0, 4))
             except Exception:
-                # Skip images that fail to load (corrupt files, etc.)
                 pass
 
+        # Render video icon card if present
         if self.video_path:
             i = len(self.image_list)
             frame = ctk.CTkFrame(grid_frame, fg_color="#402222", corner_radius=6)
@@ -1194,21 +1158,42 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             name = self.video_path.name
             ctk.CTkLabel(frame, text=name[:18], font=ctk.CTkFont(size=9), text_color="#aaa").pack(pady=(0, 1))
             
-            if self.current_mode == "review":
+            if self.current_mode in ("review", "relabel"):
                 ctk.CTkLabel(frame, text="🔍 Click to play", font=ctk.CTkFont(size=9), text_color="#666").pack(pady=(0, 1))
                 
-            rm_btn = ctk.CTkButton(frame, text="x", width=26, height=20, font=ctk.CTkFont(size=10),
-                                    fg_color="#e74c3c", hover_color="#c0392b", command=self._remove_video)
-            rm_btn.pack(pady=(0, 4))
+            if self.current_mode != "relabel":
+                rm_btn = ctk.CTkButton(frame, text="x", width=26, height=20, font=ctk.CTkFont(size=10),
+                                        fg_color="#e74c3c", hover_color="#c0392b", command=self._remove_video)
+                rm_btn.pack(pady=(0, 4))
+
+        # Render warning panels for missing media references
+        if hasattr(self, 'missing_media') and self.missing_media:
+            next_idx = len(self.image_list) + (1 if self.video_path else 0)
+            for j, (media_type, rel_path) in enumerate(self.missing_media):
+                idx = next_idx + j
+                frame = ctk.CTkFrame(grid_frame, fg_color="#3a1a1a",
+                                      corner_radius=6, border_width=2,
+                                      border_color="#e74c3c")
+                frame.grid(row=idx // cols, column=idx % cols, padx=4, pady=4)
+
+                icon = "🖼️" if media_type == "image" else "🎬"
+                ctk.CTkLabel(frame, text=f"⚠️ {icon}",
+                             font=ctk.CTkFont(size=20),
+                             width=100, height=50).pack(padx=4, pady=(4, 0))
+
+                ctk.CTkLabel(frame, text="FILE MISSING",
+                             font=ctk.CTkFont(size=9, weight="bold"),
+                             text_color="#e74c3c").pack(pady=(0, 1))
+
+                filename = Path(rel_path).name if rel_path else "unknown"
+                ctk.CTkLabel(frame, text=filename[:20],
+                             font=ctk.CTkFont(size=8),
+                             text_color="#999").pack(pady=(0, 4))
 
     def _show_image_popup(self, index):
-        """Open a popup window to view the selected image at full size.
-
-        Creates a Toplevel window that displays the image scaled to fit
-        the screen while maintaining its aspect ratio.
-
-        Args:
-            index: Zero-based index of the image to display.
+        """
+        Creates a dedicated modal-style window to show a high-resolution display of the selected image.
+        Resizes the target image proportionally to fit inside a maximum threshold of 80% screen dimensions.
         """
         if index < 0 or index >= len(self.image_list):
             return
@@ -1222,13 +1207,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         except Exception:
             return
 
-        # Create a dark popup window
         popup = ctk.CTkToplevel(self)
         popup.title("Image Viewer")
         popup.configure(fg_color="#111")
         popup.attributes("-topmost", True)
 
-        # Scale image to fit within 80% of screen dimensions
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         max_w = int(screen_w * 0.8)
@@ -1239,7 +1222,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
                                   size=(img.width, img.height))
-        # Must keep a reference so the image isn't garbage collected
         popup._photo_ref = ctk_photo
 
         lbl = ctk.CTkLabel(popup, image=ctk_photo, text="")
@@ -1290,45 +1272,42 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self._refresh_previews()
         self.status_label.configure(text="All media removed", text_color="#888")
 
-    # =========================================================================
-    # SAVE ENTRY TO CSV
-    # =========================================================================
+    # Record Persistence and Initialization
 
     def _save_entry(self):
-        """Validate all inputs and save the current entry to the CSV file.
-        
-        This is the main save workflow:
-        1. Read all field values from the UI
-        2. Validate required fields (annotator, label, text-or-image)
-        3. Show a warning if text is very short (< 10 words)
-        4. Generate a UUID for this entry
-        5. Copy/save each attached image to the images/ folder with the
-           naming convention: {Label}_{count:05d}_{uuid}_{annotator}.{ext}
-        6. Append a row to the CSV file with all metadata
-        7. Show a success popup and clear the fields for the next entry
         """
-        # --- Step 1: Read all current field values ---
+        Validates input fields, processes attached media files, and appends the annotated record
+        to the local CSV dataset.
+        
+        The save workflow consists of:
+        1. Extracting values from input entries.
+        2. Enforcing structural validations (checking for name, category, source category, 
+           label selection, and requiring either text or media).
+        3. Warning users about short text inputs (under 10 words).
+        4. Storing attachments inside images/ and videos/ subfolders using structured filenames 
+           conforming to naming templates.
+        5. Appending a standardized row to dataset.csv, writing the header first if the file is new.
+        6. Preserving the annotator's name in configuration files and resetting fields.
+        """
         annotator = self.annotator_entry.get().strip()
         label = self.label_var.get()
-        heading = self.heading_entry.get("1.0", "end-1c").strip()  # Optional headline
-        text = self.text_box.get("1.0", "end-1c").strip()  # Get text without trailing newline
+        heading = self.heading_entry.get("1.0", "end-1c").strip()  
+        text = self.text_box.get("1.0", "end-1c").strip()  
         source = self.source_entry.get().strip()
-        source_category = self.source_cat_var.get()  # Required platform/medium
+        source_category = self.source_cat_var.get()  
         category = self.category_var.get()
-        multi_cat = self.multi_cat_var.get()  # Sub-classification for fake news
+        multi_cat = self.multi_cat_var.get()  
         confidence_str = self.confidence_entry.get().strip()
         has_image = len(self.image_list) > 0
         has_media = has_image or (self.video_path is not None)
 
-        # --- Step 2: Validate required fields ---
-        # Collect all validation errors and show them at once
+        # Enforce validation rules
         errors = []
         if not annotator:
             errors.append("Annotator name is required.")
         if not label:
             errors.append("Label (Fake/Real) must be selected.")
         if label == "Fake" and not multi_cat:
-            # When the label is Fake, the annotator must select a sub-type
             errors.append("Fake News Type (Misinformation/Satire/Clickbait) must be selected.")
         if not category:
             errors.append("News Category is required.")
@@ -1337,7 +1316,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if not text and not has_media:
             errors.append("At least one of Text, Image, or Video must be provided.")
 
-        # Validate confidence value
+        # Ensure confidence ratings represent valid integer values between 0 and 100
         confidence = 100
         if not confidence_str:
             confidence = 100
@@ -1353,74 +1332,52 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             messagebox.showerror("Validation Error", "\n".join(errors))
             return
 
-        # Determine the multi_category value:
-        # - For Fake entries: use the annotator's selection (Misinformation/Satire/Clickbait)
-        # - For Real entries: automatically set to "Real"
+        # Automatically map Real news classification subtype to Real
         if label == "Real":
             multi_cat = "Real"
 
-        # --- Step 3: Warn if text is very short (non-blocking) ---
-        # The user can choose to proceed anyway
+        # Present warning confirmation if textual content is short
         if text and len(text.split()) < 10:
             proceed = messagebox.askyesno(
                 "Short Text Warning",
-                f"The text has only {len(text.split())} word(s). "
-                "Are you sure you want to save?"
+                f"The text has only {len(text.split())} word(s). Are you sure you want to save?"
             )
             if not proceed:
                 return
 
-        # --- Step 4: Generate unique ID for this entry ---
-        # UUID ensures no collisions when merging datasets from multiple annotators
+        # Generate unique database entry ID
         entry_id = generate_id()
-        # Sanitize annotator name for use in filenames (replace special chars)
         sanitized_annotator = sanitize_name(annotator)
-        # List to collect relative paths for all images in this entry
         image_rel_paths = []
 
-        # --- Step 5 & 6: File operations (Images and CSV) ---
-        # Wrap in try-except because on Windows, the CSV might be locked by Excel
         try:
-            # --- Step 5: Process and save each attached image ---
+            # Transfer images to images directory using template patterns
             if has_image:
                 for path, pil_img in self.image_list:
-                    # Get the current count of images in the folder (for sequential numbering)
                     img_count = get_image_count() + 1
     
-                    # Determine the file extension
-                    # For file-based images, use the original extension
-                    # For clipboard-pasted images, default to .png
                     if path:
                         ext = path.suffix.lower()
                     else:
                         ext = ".png"
     
-                    # Build the image filename following the naming convention:
-                    # {Label}_{5-digit-count}_{uuid}_{annotator}.{extension}
-                    # Example: Fake_00042_550e8400-e29b-41d4-a716-446655440000_Faysal.jpg
                     img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
                     img_dest = IMAGES_DIR / img_filename
     
-                    # Save the image to the images/ directory
                     if path:
-                        # File-based image: copy the original file preserving metadata
                         shutil.copy2(path, img_dest)
                     else:
-                        # Clipboard image: save the PIL Image object
                         src_img = pil_img
-                        # Convert RGBA to RGB if saving as JPEG (JPEG doesnt support alpha)
+                        # JPEGs do not support transparency layers; drop alpha if copying to JPEG
                         if src_img.mode == "RGBA" and ext in (".jpg", ".jpeg"):
                             src_img = src_img.convert("RGB")
                         src_img.save(img_dest)
     
-                    # Store the RELATIVE path (not absolute) for the CSV
-                    # This makes the dataset portable across different machines
                     image_rel_paths.append(f"images/{img_filename}")
     
-            # Join multiple image paths with semicolons for the CSV column
-            # Example: "images/Fake_00001_uuid_Faysal.jpg;images/Fake_00002_uuid_Faysal.png"
             image_path_str = ";".join(image_rel_paths)
             
+            # Transfer video files if registered
             video_rel_path = ""
             if self.video_path:
                 vid_count = get_video_count() + 1
@@ -1430,14 +1387,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 shutil.copy2(self.video_path, vid_dest)
                 video_rel_path = f"videos/{vid_filename}"
     
-            # --- Step 6: Append the entry as a new row in the CSV ---
+            # Open the CSV file and write data, initializing headers if file is empty
             file_has_content = CSV_PATH.exists() and CSV_PATH.stat().st_size > 0
             with open(CSV_PATH, "a", newline="", encoding="utf-8") as f:
                 writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
-                # Write the header row only if this is a brand new or empty CSV file
                 if not file_has_content:
                     writer.writeheader()
-                # Write the data row with all collected fields
                 writer.writerow({
                     "id": entry_id,
                     "heading": heading,
@@ -1455,78 +1410,73 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "timestamp": datetime.now().isoformat(),
                 })
         except Exception as e:
-            messagebox.showerror("Save Error", f"Failed to save data. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
+            messagebox.showerror("Save Error", f"Failed to save data. Please check if the dataset file is currently locked.\n\nError: {e}")
             return
 
-        # Persist the annotator name for future sessions
         save_config(annotator)
-
-        # --- Step 7: Show success feedback and reset for next entry ---
-        self.status_label.configure(
-            text=f"Entry saved successfully!", text_color="#2ecc71"
-        )
-        # Refresh the stats bar to show updated counts
+        self.status_label.configure(text=f"Entry saved successfully!", text_color="#2ecc71")
         self._update_stats()
-        # Clear all input fields (except annotator name) for the next entry
         self._clear_fields()
-        # Show a confirmation popup so the user knows the save completed
         messagebox.showinfo("Save Complete", f"Entry saved successfully!\nID: {entry_id}")
 
-    # =========================================================================
-    # CLEAR FIELDS AND UPDATE STATS
-    # =========================================================================
-
     def _clear_fields(self):
-        """Clear all input fields EXCEPT the annotator name.
-        
-        Called after each successful save to prepare for the next entry.
-        Also called by _clear_all. Resets: text, heading, source, label,
-        category, multi-category, and all attached images.
         """
-        self.text_box.delete("1.0", "end")       # Clear the text area
-        self.heading_entry.delete("1.0", "end")       # Clear the heading field
-        self.source_entry.delete(0, "end")         # Clear the source field
-        self.notes_entry.delete("0.0", "end")      # Clear additional notes
-        self.label_var.set("")                      # Deselect the label radio buttons
-        self._update_label_toggles()                 # Reset Fake/Real button visuals
-        self.category_var.set("")                   # Reset category dropdown
-        self.source_cat_var.set("")                  # Reset source category dropdown
-        self.multi_cat_var.set("")                   # Reset multi-category selection
-        self.multi_cat_frame.pack_forget()           # Hide multi-category panel
-        self._remove_all_images()                   # Clear all attached images
-        self.confidence_entry.delete(0, "end")      # Clear confidence field
-        self.confidence_entry.insert(0, "100")      # Reset default value to 100
+        Resets input controllers to their default values, skipping the annotator name.
+        Hides context-dependent panels and clears attachments from preview frames.
+        """
+        self.text_box.delete("1.0", "end")       
+        self.heading_entry.delete("1.0", "end")       
+        self.source_entry.delete(0, "end")         
+        self.notes_entry.delete("0.0", "end")      
+        self.label_var.set("")                      
+        self._update_label_toggles()                 
+        self.category_var.set("")                   
+        self.source_cat_var.set("")                  
+        self.multi_cat_var.set("")                   
+        self.multi_cat_frame.pack_forget()           
+        self._remove_all_images()                   
+        self.confidence_entry.delete(0, "end")      
+        self.confidence_entry.insert(0, "100")      
 
     def _clear_all(self):
-        """Clear all fields except the annotator name.
-        
-        Triggered by the 'Clear All' button. The annotator name is
-        intentionally preserved because the same person typically
-        annotates many entries in a single session.
+        """
+        Clears workspace fields. Maintains annotator identifiers for productivity.
         """
         self._clear_fields()
         self.status_label.configure(text="All fields cleared", text_color="#888")
 
     def _has_unsaved_annotate_work(self):
-        """Check if there is any unsaved work in Annotate mode."""
+        """
+        Verifies if input controls in Annotate mode contain modifications relative to
+        an empty form.
+        """
         if self.current_mode != "annotate":
             return False
         
-        if self.label_var.get(): return True
-        if self.heading_entry.get("1.0", "end-1c").strip(): return True
-        if self.text_box.get("1.0", "end-1c").strip(): return True
-        if self.source_entry.get().strip(): return True
-        if self.source_cat_var.get(): return True
-        if self.category_var.get(): return True
-        if self.multi_cat_var.get(): return True
+        if self.label_var.get() != "": return True
+        if self.heading_entry.get("1.0", "end-1c").strip() != "": return True
+        if self.text_box.get("1.0", "end-1c").strip() != "": return True
+        if self.source_entry.get().strip() != "": return True
+        if self.source_cat_var.get() != "": return True
+        if self.category_var.get() != "": return True
+        if self.multi_cat_var.get() != "": return True
+        if self.confidence_entry.get().strip() not in ("", "100"): return True
+        if self.notes_entry.get("0.0", "end-1c").strip() != "": return True
         if len(self.image_list) > 0: return True
+        if self.video_path is not None: return True
         
         return False
 
     def _on_closing(self):
-        """Handle the window close event to prevent accidental data loss."""
+        """
+        Intercepts closure signals. Prompts validation alerts depending on active work modes
+        to shield annotators from unsaved changes.
+        """
         if self.current_mode == "review":
             if not self._check_unsaved_changes():
+                return
+        elif self.current_mode == "relabel":
+            if not self._check_unsaved_kappa_changes():
                 return
         elif self.current_mode == "annotate":
             if self._has_unsaved_annotate_work():
@@ -1539,44 +1489,55 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.destroy()
 
     def _apply_advanced_filter(self, keep_index=False):
-        """Filter the dataset based on the advanced filter settings."""
+        """
+        Filters the full dataset based on advanced criteria selected in the filter popup.
+        
+        This method processes the in-memory master list of records (all_dataset_records)
+        and applies active filter parameters such as labels, sub-types, categories, source platforms,
+        annotator names, content types (text/image/video combinations), the presence of notes,
+        and confidence intervals.
+        
+        Args:
+            keep_index: If True, preserves the current record review index. If False, or if
+                        the current index is out of bounds after filtering, resets the index to 0.
+        """
         if self.current_mode != "review":
             return
 
         filt = self.advanced_filter
 
+        # If no filter criteria are active, restore the full dataset list
         if not filt:
-            # No filter active — show everything
             self.dataset_records = list(self.all_dataset_records)
         else:
             filtered = list(self.all_dataset_records)
 
-            # Filter by label
+            # Filter records by active authenticity labels (Fake / Real)
             sel_labels = filt.get("labels")
             if sel_labels:
                 filtered = [r for r in filtered if (r.get("label") or "") in sel_labels]
 
-            # Filter by fake news type (multi_category)
+            # Filter records by fake news classification sub-types
             sel_types = filt.get("types")
             if sel_types:
                 filtered = [r for r in filtered if (r.get("multi_category") or "") in sel_types]
 
-            # Filter by news category
+            # Filter records by topic categories (e.g. Politics, Sports)
             sel_cats = filt.get("categories")
             if sel_cats:
                 filtered = [r for r in filtered if (r.get("category") or "") in sel_cats]
 
-            # Filter by source category
+            # Filter records by news source categories (e.g. newspaper, social media)
             sel_src_cats = filt.get("source_categories")
             if sel_src_cats:
                 filtered = [r for r in filtered if (r.get("source_category") or "") in sel_src_cats]
 
-            # Filter by annotator
+            # Filter records by the name of the annotator who saved them
             sel_annotators = filt.get("annotators")
             if sel_annotators:
                 filtered = [r for r in filtered if (r.get("annotator") or "") in sel_annotators]
 
-            # Filter by content type (Image Only / Text & Image / Text Only / Has Video)
+            # Filter records by their structural content type (e.g. text only, text & media)
             sel_content_types = filt.get("content_types")
             if sel_content_types:
                 def _content_type(r):
@@ -1591,7 +1552,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     elif has_text:
                         return "Text Only"
                     return ""
-                # "Has Video" is a special content type that checks video_path independently
+                
+                # Check for video attachments separately from standard text/image breakdowns
                 check_has_video = "Has Video" in sel_content_types
                 other_types = sel_content_types - {"Has Video"}
                 if other_types and check_has_video:
@@ -1601,11 +1563,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 else:
                     filtered = [r for r in filtered if _content_type(r) in other_types]
 
-            # Filter by "Has Additional Notes"
+            # Filter records to only show those containing internal annotator notes
             if filt.get("has_notes"):
                 filtered = [r for r in filtered if (r.get("additional_notes") or "").strip()]
 
-            # Filter by confidence interval
+            # Filter records by annotation confidence interval limits
             min_conf = filt.get("min_conf")
             max_conf = filt.get("max_conf")
             if min_conf is not None or max_conf is not None:
@@ -1621,15 +1583,17 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
             self.dataset_records = filtered
 
+        # Resolve index indexing boundaries for review navigation
         if not keep_index:
             self.current_review_index = 0
         elif self.current_review_index >= len(self.dataset_records):
             self.current_review_index = max(0, len(self.dataset_records) - 1)
 
+        # Refresh the stats dashboard badges and active filter text
         self._update_stats()
         self._update_filter_indicator()
 
-        # In Review mode, always attempt to display the current record
+        # Update the form UI to display the current record, or clear fields if empty
         if self.dataset_records:
             self.record_index_entry.configure(state="normal")
             self._display_record(self.current_review_index)
@@ -1644,7 +1608,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.next_btn.configure(state="disabled")
 
     def _update_filter_indicator(self):
-        """Update the filter indicator label next to the filter button."""
+        """
+        Updates the UI filter status label and button styling.
+        
+        Reflects the count of active filter parameters on the label next to the
+        filter button. If filters are active, highlights the button with a yellow warning color.
+        """
         if self.advanced_filter:
             count = 0
             f = self.advanced_filter
@@ -1663,7 +1632,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.filter_btn.configure(fg_color="#2d2d5e", border_color="#555")
 
     def _collect_unique_values(self, field):
-        """Collect all unique non-empty values for a given field from all records."""
+        """
+        Collects all unique, non-empty values for a specified column from all loaded records.
+        
+        This helper is used to dynamically construct selection options inside the filter dialog
+        based on actual values present in the CSV database (such as unique annotator names).
+        
+        Args:
+            field: The column name in the dataset records to extract values from.
+            
+        Returns:
+            A sorted list of unique non-empty string values.
+        """
         values = set()
         for r in self.all_dataset_records:
             v = (r.get(field) or "").strip()
@@ -1672,14 +1652,20 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         return sorted(values)
 
     def _show_filter_popup(self):
-        """Open a filter settings popup with checkboxes and confidence range."""
+        """
+        Opens a modal window containing advanced filter controls for Review mode.
+        
+        Constructs checklists for labels, sub-types, categories, platforms,
+        annotators, and content types. Includes entry fields for setting the
+        minimum and maximum confidence interval boundaries.
+        """
         popup = ctk.CTkToplevel(self)
         popup.title("Filter Records")
         popup.configure(fg_color="#1a1a2e")
         popup.attributes("-topmost", True)
         popup.resizable(True, True)
 
-        # Size and center the popup
+        # Center the popup window on the screen relative to the main app coordinates
         pw, ph = 600, 580
         popup.geometry(f"{pw}x{ph}")
         popup.update_idletasks()
@@ -1687,20 +1673,23 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
         popup.geometry(f"+{x}+{y}")
 
-        # Title
+        # Section Header Label
         ctk.CTkLabel(popup, text="🔽 Filter Settings",
                      font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(12, 6))
 
-        # Scrollable content area
+        # Scrollable container supporting vertical layout overflows
         scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
         scroll.pack(fill="both", expand=True, padx=12, pady=(0, 6))
 
-        # Pre-populate from current filter
+        # Load active filter selections to pre-populate checkbox variables
         cur = self.advanced_filter or {}
 
-        # ── Helper to build a checkbox section ──
         def _checkbox_section(parent, title, options, pre_selected):
-            """Build a section with a title and checkboxes; returns list of (value, BooleanVar) tuples."""
+            """
+            Builds a card frame containing checklists for a categorical filter section.
+            
+            Returns a list of (option_value, BooleanVar) tuples to read selection states.
+            """
             frame = ctk.CTkFrame(parent, fg_color="#222244", corner_radius=8,
                                   border_width=1, border_color="#444")
             frame.pack(fill="x", pady=(6, 2))
@@ -1713,6 +1702,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             row_frame = ctk.CTkFrame(frame, fg_color="transparent")
             row_frame.pack(fill="x", padx=10, pady=(0, 6))
 
+            # Render checkboxes in a 4-column grid layout
             for i, opt in enumerate(options):
                 var = ctk.BooleanVar(value=(opt in pre_selected) if pre_selected else False)
                 cb = ctk.CTkCheckBox(row_frame, text=opt, variable=var,
@@ -1722,96 +1712,118 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 vars_list.append((opt, var))
             return vars_list
 
-        # ── 1. Label (Fake / Real) ──
+        # Authenticity labels (Fake / Real)
         label_vars = _checkbox_section(scroll, "Label",
                                        ["Fake", "Real"],
                                        cur.get("labels", set()))
 
-        # ── 2. Fake News Type ──
+        # Fake News Sub-classification Types
         type_vars = _checkbox_section(scroll, "Fake News Type",
                                       MULTI_CATEGORIES,
                                       cur.get("types", set()))
 
-        # ── 3. News Category ──
+        # Topic Categories (politics, science, etc.) compiled dynamically from data
         all_categories = self._collect_unique_values("category")
         cat_vars = _checkbox_section(scroll, "News Category",
                                      all_categories if all_categories else ["(no data)"],
                                      cur.get("categories", set()))
 
-        # ── 4. Source Category ──
+        # Platform medium categories compiled dynamically from data
         all_src_cats = self._collect_unique_values("source_category")
         src_cat_vars = _checkbox_section(scroll, "Source Category",
                                          all_src_cats if all_src_cats else ["(no data)"],
                                          cur.get("source_categories", set()))
 
-        # ── 5. Annotator ──
+        # Annotators names compiled dynamically from data
         all_annotators = self._collect_unique_values("annotator")
         ann_vars = _checkbox_section(scroll, "Annotator",
                                      all_annotators if all_annotators else ["(no data)"],
                                      cur.get("annotators", set()))
 
-        # ── 6. Content Type ──
+        # Media and Text content structure categories
         content_type_vars = _checkbox_section(scroll, "Content Type",
                                               ["Image Only", "Text & Image", "Text Only", "Has Video"],
                                               cur.get("content_types", set()))
 
-        # ── 7. Has Additional Notes ──
+        # Filter checkbox to toggle showing only records that contain non-empty annotator notes/comments.
+        # This BooleanVar tracks the checkbox state and is pre-filled from the current filter settings.
         has_notes_var = ctk.BooleanVar(value=cur.get("has_notes", False))
         notes_filter_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
                                            border_width=1, border_color="#444")
         notes_filter_frame.pack(fill="x", pady=(6, 2))
+        
+        # Section title label for the additional notes filter block
         ctk.CTkLabel(notes_filter_frame, text="Additional Notes",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#ccc").pack(anchor="w", padx=10, pady=(6, 2))
+        
+        # Checklist checkbox container frame
         notes_cb_frame = ctk.CTkFrame(notes_filter_frame, fg_color="transparent")
         notes_cb_frame.pack(fill="x", padx=10, pady=(0, 6))
+        
+        # Checkbox controlling whether we restrict results to entries with user notes
         ctk.CTkCheckBox(notes_cb_frame, text="Only show entries with additional notes",
                         variable=has_notes_var, font=ctk.CTkFont(size=12),
                         height=24, checkbox_width=18, checkbox_height=18).pack(anchor="w")
 
-        # ── 7. Confidence Interval ──
+        # Confidence Interval Range Selector
+        # This frame groups controls that restrict the loaded subset to records within a specific confidence interval (0 to 100).
         conf_frame = ctk.CTkFrame(scroll, fg_color="#222244", corner_radius=8,
                                    border_width=1, border_color="#444")
         conf_frame.pack(fill="x", pady=(6, 2))
 
+        # Title for the confidence interval settings section
         ctk.CTkLabel(conf_frame, text="Confidence Interval",
                      font=ctk.CTkFont(size=13, weight="bold"),
                      text_color="#ccc").pack(anchor="w", padx=10, pady=(6, 2))
 
+        # Horizontal alignment row frame containing labels and text entries for min and max bounds
         conf_row = ctk.CTkFrame(conf_frame, fg_color="transparent")
         conf_row.pack(fill="x", padx=10, pady=(0, 8))
 
+        # Input field for the minimum confidence value (default is 0)
         ctk.CTkLabel(conf_row, text="Min:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
         min_conf_entry = ctk.CTkEntry(conf_row, width=60, height=26,
                                        font=ctk.CTkFont(size=12), justify="center")
         min_conf_entry.pack(side="left", padx=(0, 16))
         min_conf_entry.insert(0, str(cur.get("min_conf", 0)))
 
+        # Input field for the maximum confidence value (default is 100)
         ctk.CTkLabel(conf_row, text="Max:", font=ctk.CTkFont(size=12)).pack(side="left", padx=(0, 4))
         max_conf_entry = ctk.CTkEntry(conf_row, width=60, height=26,
                                        font=ctk.CTkFont(size=12), justify="center")
         max_conf_entry.pack(side="left")
         max_conf_entry.insert(0, str(cur.get("max_conf", 100)))
 
-        # ── Buttons ──
+        # Action control buttons container frame positioned at the bottom of the modal
         btn_container = ctk.CTkFrame(popup, fg_color="transparent")
         btn_container.pack(fill="x", padx=12, pady=(4, 12))
 
-        # Collect all checkbox var lists for the clear-all function
+        # Combine all checkbox selection variables into a single flat list to simplify bulk resets
         all_checkbox_vars = label_vars + type_vars + cat_vars + src_cat_vars + ann_vars + content_type_vars
 
         def _clear_selections():
-            """Uncheck every checkbox and reset confidence to 0–100 without closing."""
+            """
+            Resets all checkboxes in the popup and reverts the confidence interval 
+            entries to the standard 0 to 100 range. Does not close the window.
+            """
+            # Reset all categories and filters in the checkboxes
             for _, var in all_checkbox_vars:
                 var.set(False)
             has_notes_var.set(False)
+            
+            # Revert confidence entry fields back to absolute defaults
             min_conf_entry.delete(0, "end")
             min_conf_entry.insert(0, "0")
             max_conf_entry.delete(0, "end")
             max_conf_entry.insert(0, "100")
 
         def _apply():
-            # Collect selected values
+            """
+            Gathers the selected filters from the dialog checklist variables and confidence fields.
+            Updates the application state's advanced_filter dictionary and triggers database updates.
+            """
+            # Pull selected list values from checkboxes
             sel_labels = {v for v, var in label_vars if var.get()}
             sel_types = {v for v, var in type_vars if var.get()}
             sel_cats = {v for v, var in cat_vars if var.get() and v != "(no data)"}
@@ -1819,21 +1831,27 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             sel_annotators = {v for v, var in ann_vars if var.get() and v != "(no data)"}
             sel_content_types = {v for v, var in content_type_vars if var.get()}
 
-            # Parse confidence
+            # Parse minimum confidence threshold value, reverting to 0 on string parsing errors
             try:
                 mn = int(min_conf_entry.get().strip())
             except ValueError:
                 mn = 0
+            
+            # Parse maximum confidence threshold value, reverting to 100 on string parsing errors
             try:
                 mx = int(max_conf_entry.get().strip())
             except ValueError:
                 mx = 100
+            
+            # Clamp thresholds to allowable percentages (0 to 100)
             mn = max(0, min(100, mn))
             mx = max(0, min(100, mx))
+            
+            # Swap values if user inadvertently input them backwards
             if mn > mx:
                 mn, mx = mx, mn
 
-            # Check if any filter is actually active
+            # Determine whether any active filter rules have been configured by checking selections
             notes_checked = has_notes_var.get()
             has_filter = (
                 bool(sel_labels) or bool(sel_types) or bool(sel_cats) or
@@ -1841,6 +1859,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 notes_checked or mn > 0 or mx < 100
             )
 
+            # Build or clear the advanced filter model dictionary accordingly
             if has_filter:
                 self.advanced_filter = {
                     "labels": sel_labels if sel_labels else None,
@@ -1856,95 +1875,153 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             else:
                 self.advanced_filter = None
 
+            # Apply the selected criteria to reload the active list, then close popup
             self._apply_advanced_filter()
             popup.destroy()
 
         def _clear_and_apply():
+            """
+            Deactivates all filter parameters and closes the window immediately,
+            restoring access to all records in the review queue.
+            """
             self.advanced_filter = None
             self._apply_advanced_filter()
             popup.destroy()
 
-        # Row 1: Apply + Clear All Selections
+        # Row 1 layout: Apply Filter + Clear All Selections buttons placed side-by-side
         row1 = ctk.CTkFrame(btn_container, fg_color="transparent")
         row1.pack(fill="x", pady=(0, 6))
 
+        # Button to confirm selections and update list view
         ctk.CTkButton(row1, text="✅ Apply Filter", command=_apply,
                        height=36, font=ctk.CTkFont(size=14, weight="bold"),
                        fg_color="#2ecc71", hover_color="#27ae60",
                        text_color="black").pack(side="left", expand=True, fill="x", padx=(0, 6))
 
+        # Button to clear checkboxes without submitting/applying or closing the popup
         ctk.CTkButton(row1, text="↺ Clear All", command=_clear_selections,
                        height=36, font=ctk.CTkFont(size=13),
                        fg_color="#555", hover_color="#777",
                        width=130).pack(side="left")
 
-        # Row 2: Clear Filter + Cancel
+        # Row 2 layout: Clear Filter (disabling active settings) + Cancel buttons
         row2 = ctk.CTkFrame(btn_container, fg_color="transparent")
         row2.pack(fill="x")
 
+        # Button to immediately wipe all active filter constraints from the review page
         ctk.CTkButton(row2, text="🗑️ Clear Filter", command=_clear_and_apply,
                        height=36, font=ctk.CTkFont(size=13, weight="bold"),
                        fg_color="#e74c3c", hover_color="#c0392b").pack(side="left", expand=True, fill="x", padx=(0, 6))
 
+        # Button to exit modal layout without saving any changes
         ctk.CTkButton(row2, text="Cancel", command=popup.destroy,
                        height=36, font=ctk.CTkFont(size=13),
                        fg_color="transparent", border_width=1,
                        border_color="#555", width=130).pack(side="left")
 
     def _create_stat_badge(self, parent, label, count, dot_color="#888"):
-        """Create a colored badge card for the stats bar.
-        
-        Each badge shows a colored dot, a bold count number, and a label.
         """
+        Creates and packs a visually stylized metric badge/card inside the stats bar.
+        
+        Each badge card is enclosed in a dark, rounded container with a subtle border.
+        It contains a colored circular dot indicating status/category, a large bold
+        counter showing the numeric value, and a smaller descriptive label.
+        
+        Args:
+            parent: The Tkinter container widget that will host this badge.
+            label: Text descriptor for the metric (e.g., "Fake", "Real", "Images").
+            count: Numeric value/count to display.
+            dot_color: Hex color string for the status dot indicator.
+        """
+        # Create the outer container frame for the statistic badge card.
+        # This frame establishes the card boundaries, using a dark background color
+        # and rounded corners for a modern, dashboard-like style.
         badge = ctk.CTkFrame(parent, fg_color="#1e1e3a", corner_radius=8,
                               border_width=1, border_color="#333")
         
+        # Create an inner widget wrapper that handles spacing and layout within the card.
+        # Keeping this transparent lets the parent frame's background color show through.
         inner = ctk.CTkFrame(badge, fg_color="transparent")
         inner.pack(padx=10, pady=6)
         
-        # Colored dot
+        # Draw the status indicator dot. We configure a tiny frame with rounded corners
+        # (corner_radius = half of width/height) to create a perfect circle.
         dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5,
                             fg_color=dot_color)
         dot.pack(side="left", padx=(0, 6))
+        
+        # Disable pack propagation on the dot frame. This is critical because without it,
+        # Tkinter would shrink this empty container to 0x0 size since it has no child widgets.
         dot.pack_propagate(False)
         
-        # Count number (bold)
+        # Render the count text. We use a larger, bold font to make the numeric statistic
+        # stand out as the primary metric of the card.
         ctk.CTkLabel(inner, text=str(count),
                      font=ctk.CTkFont(size=16, weight="bold"),
                      text_color="#ffffff").pack(side="left", padx=(0, 6))
         
-        # Label text (smaller)
+        # Render the helper label text to describe what the count represents.
+        # This uses a smaller, secondary text color to keep the dashboard visual hierarchy clean.
         ctk.CTkLabel(inner, text=label,
                      font=ctk.CTkFont(size=11),
                      text_color="#aaa").pack(side="left")
 
     def _create_stat_label(self, parent, text, filter_key=None, is_separator=False):
-        """Helper to create stat labels inside a frame (display only, no click filtering)."""
+        """
+        Helper method to instantiate stat labels inside a FlowFrame parent.
+        
+        These labels do not define click actions. Instead, they serve as display
+        items or textual separators (e.g. pipe characters) in the categories list.
+        Because they are placed in a FlowFrame, they do not need explicit manual
+        packing; the parent layout manager arranges them automatically.
+        
+        Args:
+            parent: The FlowFrame hosting the label list.
+            text: Text content of the label.
+            filter_key: Optional identifier for category filtering.
+            is_separator: If True, renders a neutral separator style.
+        """
+        # If this is a decorative divider element (like a pipe separator "|"),
+        # render it using a default font style without key-based color themes.
         if is_separator:
             lbl = ctk.CTkLabel(parent, text=text, font=ctk.CTkFont(size=13))
             return
 
+        # Determine label text color by checking the active Tkinter appearance mode (Dark vs Light).
+        # This keeps text elements legible regardless of system-level styling preferences.
         color = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#000000"
         fnt = ctk.CTkFont(size=13)
         lbl = ctk.CTkLabel(parent, text=text, font=fnt, text_color=color)
 
     def _update_stats(self):
-        """Refresh the stats bar at the top of the UI with colored badge cards.
-        
-        In Review mode with a filter active, shows counts from the filtered
-        subset. Otherwise shows global counts from the CSV.
-        Called after each save and at startup.
         """
-        # Determine if we should show filtered counts
+        Recalculates and refreshes the database statistics dashboard at the top of the UI.
+        
+        This method aggregates count data for articles, classification labels, fake news
+        sub-categories, and media types. It supports two operational scopes:
+        1. Filtered subset: If the user is in Review mode and has an active search filter, 
+           statistics are calculated dynamically from the loaded/filtered records in memory.
+        2. Global dataset: Otherwise, statistics are fetched directly from the database 
+           using backend helper functions.
+           
+        After calculating counts, all existing badge widgets are destroyed and recreated
+        to avoid layout stacking, followed by a manual FlowFrame layout trigger.
+        """
+        # Determine whether we should compile statistics from the active filter results.
+        # This is active only if we are in review mode and an advanced filter query is loaded.
         use_filtered = (self.current_mode == "review" and self.advanced_filter
-                        and hasattr(self, 'dataset_records'))
+                         and hasattr(self, 'dataset_records'))
 
         if use_filtered:
-            # Compute counts from the filtered records
+            # Aggregate category stats directly from the filtered memory list.
             records = self.dataset_records
             total = len(records)
+            
+            # Tally primary target authenticity classes
             fake = sum(1 for r in records if (r.get("label") or "") == "Fake")
             real = sum(1 for r in records if (r.get("label") or "") == "Real")
+            
+            # Set up aggregation trackers for fake news subtypes, categories, and media
             sub = {"Misinformation": 0, "Satire": 0, "Clickbait": 0}
             news_cats = {}
             img_count = 0
@@ -1952,33 +2029,47 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             only_image = 0
             only_text = 0
             both_text_image = 0
+            
+            # Iterate through active records and aggregate counts
             for r in records:
+                # Increment counts for fake news classifications (Misinformation, Satire, Clickbait)
                 mc = (r.get("multi_category") or "").strip()
                 if mc in sub:
                     sub[mc] += 1
+                
+                # Increment counts for news categories (e.g. Politics, Sports, Health)
                 cat = (r.get("category") or "").strip()
                 if cat:
                     news_cats[cat] = news_cats.get(cat, 0) + 1
+                
+                # Parse semicolon-delimited image paths and count files
                 ip = (r.get("image_path") or "").strip()
                 img_list = [p for p in ip.split(";") if p.strip()]
                 if ip:
                     img_count += len(img_list)
+                
+                # Check for video attachments
                 vp = (r.get("video_path") or "").strip()
                 if vp:
                     vid_count += 1
                 
-                # Content breakdown
+                # Categorize the article format based on the presence of text vs media files
                 has_text = bool((r.get("text") or "").strip())
                 has_image = bool(img_list)
                 has_media = has_image or bool(vp)
+                
                 if has_text and has_media:
                     both_text_image += 1
                 elif has_text and not has_media:
                     only_text += 1
                 elif not has_text and has_media:
                     only_image += 1
+            
+            # Retain a reference to the global unfiltered total to display alongside the subset size
             global_total = len(self.all_dataset_records)
         else:
+            # Query global database stats directly from the CSV parser backend module.
+            # This is used when there are no active filters or we are in standard annotate mode.
             counts = get_label_counts()
             img_count = get_image_count()
             vid_count = get_video_count()
@@ -1992,26 +2083,30 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             both_text_image = counts["both_text_image"]
             global_total = None
 
-        # Clear existing widgets
+        # Tear down all existing badge widgets from the main stats frame.
+        # This prevents widgets from stacking on top of each other when redrawing.
         for widget in self.stats_frame.winfo_children():
             widget.destroy()
+            
+        # Clean up existing category label displays from the bottom statistics strip.
         for widget in self.category_stats_frame.winfo_children():
             widget.destroy()
 
-        # Badge cards — each stat gets a colored badge
-        # Total entries
+        # Build total entries dashboard cards
         if use_filtered:
+            # Display active records relative to the database totals (e.g. "Filtered / 45")
             self._create_stat_badge(self.stats_frame, f"Filtered / {global_total}", total, "#3498db")
         else:
             self._create_stat_badge(self.stats_frame, "Total", total, "#3498db")
         
-        # Label counts (skip zeros when filtered)
+        # Render Fake/Real category status badges.
+        # If using active filters, we hide badges that have zero counts to keep the UI clean.
         if not use_filtered or fake > 0:
             self._create_stat_badge(self.stats_frame, "Fake", fake, "#e74c3c")
         if not use_filtered or real > 0:
             self._create_stat_badge(self.stats_frame, "Real", real, "#2ecc71")
         
-        # Subcategory counts
+        # Render subclassification badges for fine-grained Fake News subtypes
         if not use_filtered or sub["Misinformation"] > 0:
             self._create_stat_badge(self.stats_frame, "Misinfo", sub["Misinformation"], "#e67e22")
         if not use_filtered or sub["Satire"] > 0:
@@ -2019,9 +2114,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if not use_filtered or sub["Clickbait"] > 0:
             self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
         
-        # Content breakdown
+        # Render media files attachments total counts
         self._create_stat_badge(self.stats_frame, "Images", img_count, "#1abc9c")
         self._create_stat_badge(self.stats_frame, "Videos", vid_count, "#1abc9c")
+        
+        # Render article modality cards (modality distribution stats)
         if not use_filtered or only_text > 0:
             self._create_stat_badge(self.stats_frame, "Text Only", only_text, "#34495e")
         if not use_filtered or both_text_image > 0:
@@ -2029,58 +2126,125 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if not use_filtered or only_image > 0:
             self._create_stat_badge(self.stats_frame, "Img Only", only_image, "#2c3e50")
 
-        # Category stats line
+        # Compile and layout the horizontal categories text bar
         if news_cats:
+            # Instantiate section header
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
             
+            # Sort category keys alphabetically to guarantee a stable, predictable layout order
             sorted_cats = sorted(news_cats.items())
             for i, (cat, count) in enumerate(sorted_cats):
                 self._create_stat_label(self.category_stats_frame, f"{cat}: {count}", filter_key=cat)
+                
+                # Append pipe separators between adjacent items, skipping the last element
                 if i < len(sorted_cats) - 1:
                     self._create_stat_label(self.category_stats_frame, "|", is_separator=True)
         else:
+            # Fallback message displayed when no categories have been saved yet
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  No entries yet", font=ctk.CTkFont(size=12), text_color="#aaa")
 
-        # Explicitly trigger layout arrangement
+        # Force Tkinter layout engine update to process changes before arranging widget coordinate paths
         self.stats_frame.update_idletasks()
         self.category_stats_frame.update_idletasks()
+        
+        # Call the FlowFrame layout manager arrange algorithm to calculate reflow positions
         self.stats_frame._arrange()
         self.category_stats_frame._arrange()
 
-
-    # =========================================================================
     # REVIEW MODE
-    # =========================================================================
 
     def _toggle_mode(self, mode_name):
-        """Switch between Annotate and Review modes.
-
-        When switching to Review: saves the current annotation as a draft,
-        loads the CSV, and displays the first record.
-        When switching to Annotate: restores the saved draft.
         """
+        Manages transitions between Annotate, Review, and Re-label modes.
+        
+        This method acts as a router/coordinator when switching between application views.
+        Before completing a switch, it checks for unsaved changes in the active mode
+        and prompts the user appropriately. On successful confirmation, it performs
+        the following setup steps:
+        - Annotate mode: Restores the cached layout grid, switches primary buttons 
+          to "Save Entry", recovers draft inputs, and updates statistics.
+        - Review mode: Ingests the primary CSV database, updates primary buttons to 
+          "Update Entry", reveals record navigation controls, and applies active filters.
+        - Re-label mode: Ingests the kappa reliability dataset, makes primary article
+          fields read-only, hides secondary inputs (like category or confidence), 
+          adjusts container widths, and searches for the first unlabeled record.
+        """
+        # Save reference of the mode we are switching away from
+        previous_mode = self.current_mode
+
+        # Case 1: Switching to standard Annotate Mode
         if "Annotate" in mode_name:
+            # If the application is already in annotate mode, do nothing
             if self.current_mode == "annotate":
                 return
-            if not self._check_unsaved_changes():
-                self.mode_switcher.set("🔍 Review")
-                return
+            
+            # If leaving Review mode, check for unsaved edits on the active record first
+            if self.current_mode == "review":
+                if not self._check_unsaved_changes():
+                    # Revert the dropdown selector if the user aborted the switch
+                    self.mode_switcher.set("🔍 Review")
+                    return
+            
+            # If leaving Re-label mode, check for unsaved decisions on the active reliability record
+            if self.current_mode == "relabel":
+                if not self._check_unsaved_kappa_changes():
+                    # Revert the dropdown selector if the user aborted the switch
+                    self.mode_switcher.set("🔄 Re-label")
+                    return
+                # Restore editing layouts modified specifically for Re-label mode
+                self._exit_relabel_mode()
+            
+            # Set the internal state indicator to annotate mode
             self.current_mode = "annotate"
+            
+            # Hide navigation panels and filter settings widgets from the top bar
             self.nav_frame.grid_forget()
             self.filter_btn.pack_forget()
             self.filter_indicator.pack_forget()
-            # Swap buttons to Annotate mode
+            
+            # Configure primary button to trigger entry save logic
             self.primary_btn.configure(text="💾  Save Entry", command=self._save_entry)
+            self.primary_btn.pack_configure(padx=(0, 8))
+            
+            # Re-enable the secondary 'Clear All' button next to the save button
             self.secondary_btn.configure(text="🗑  Clear All", command=self._clear_all,
-                                          fg_color="#444", hover_color="#555")
+                                           fg_color="#444", hover_color="#555")
+            self.secondary_btn.pack(side="left")
+            
+            # Restore regular annotation layouts, reload draft changes if cached, and refresh statistics
+            self._restore_annotate_fields()
             self._restore_draft()
             self._update_stats()
+            
+        # Case 2: Switching to Review Mode (browsing previously saved records)
         elif "Review" in mode_name:
+            # If the application is already in review mode, do nothing
             if self.current_mode == "review":
                 return
-            self._save_draft()
+            
+            # Ensure any incomplete annotations in Annotate mode are saved or discarded
+            if self.current_mode == "annotate":
+                if not self._check_unsaved_annotate_changes():
+                    self.mode_switcher.set("📝 Annotate")
+                    return
+            
+            # Ensure any incomplete blind ratings in Re-label mode are resolved
+            if self.current_mode == "relabel":
+                if not self._check_unsaved_kappa_changes():
+                    self.mode_switcher.set("🔄 Re-label")
+                    return
+                self._exit_relabel_mode()
+            
+            # Set the internal state indicator to review mode
             self.current_mode = "review"
+            
+            # Restore normal input fields that might have been hidden by Re-label mode
+            self._restore_annotate_fields()
+            
+            # Load entries from the database file
             self._load_dataset()
+            
+            # If there are no saved records in dataset.csv, return to Annotate mode
             if not self.all_dataset_records:
                 messagebox.showinfo("No Data",
                     "No entries found in dataset.csv.\nAnnotate some entries first!")
@@ -2089,98 +2253,169 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 self._restore_draft()
                 self._update_stats()
                 return
-            # Swap buttons to Review mode
+                
+            # Configure primary action button to trigger update modifications
             self.primary_btn.configure(text="💾  Update Entry", command=self._update_entry)
+            self.primary_btn.pack_configure(padx=(0, 8))
+            
+            # Reconfigure secondary action button to serve as a delete button
             self.secondary_btn.configure(text="🗑  Delete", command=self._delete_entry,
                                           fg_color="#e74c3c", hover_color="#c0392b")
+            self.secondary_btn.pack(side="left")
+            
+            # Make the record navigation bar and filter widgets visible
             self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
             self.filter_btn.pack(side="right", padx=(4, 0))
             self.filter_indicator.pack(side="right", padx=(4, 0))
             self._update_filter_indicator()
+            
+        # Case 3: Switching to Re-label (Kappa reliability check) Mode
+        elif "Re-label" in mode_name:
+            # If the application is already in relabel mode, do nothing
+            if self.current_mode == "relabel":
+                return
+            
+            # Ensure any unsaved reviews are committed or discarded first
+            if self.current_mode == "review":
+                if not self._check_unsaved_changes():
+                    self.mode_switcher.set("🔍 Review")
+                    return
+            
+            # Ensure any incomplete workspace entries in Annotate mode are resolved
+            if self.current_mode == "annotate":
+                if not self._check_unsaved_annotate_changes():
+                    self.mode_switcher.set("📝 Annotate")
+                    return
+            
+            # Set the internal state indicator to relabel mode
+            self.current_mode = "relabel"
+            
+            # Trigger layout transformations and load the Kappa CSV file
+            self._enter_relabel_mode()
 
     def _load_dataset(self):
-        """Load all records from the dataset CSV into memory for review."""
+        """
+        Loads all records from the dataset CSV file into memory for review.
+        
+        Reads rows from dataset.csv, converting them into dictionaries, and then 
+        applies the advanced checklist/filter criteria to populate the active subset.
+        """
+        # Reset the master records container list
         self.all_dataset_records = []
+        
+        # If the dataset CSV does not exist or is empty, initialize empty lists and return
         if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
             self.dataset_records = []
             return
+        
+        # Read the file contents as dictionaries and append them to the master list
         with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
                 self.all_dataset_records.append(row)
                 
+        # Apply the active advanced filter settings to construct the subset list (dataset_records)
         self._apply_advanced_filter()
 
     def _display_record(self, index):
-        """Populate all UI fields with data from the record at the given index.
-
-        Loads text fields, dropdowns, label selection, confidence, and
-        any images referenced in the record's image_path column.
         """
+        Populates all UI input and display fields with data from a specific record.
+        
+        Handles:
+        - Enabling/disabling Prev/Next navigation buttons according to record bounds.
+        - Updating the record counter indicator entry box.
+        - Populating text fields, category select menus, confidence metrics, and notes.
+        - Extracting and loading image arrays (verifying file paths relative to script).
+        - Handling attached video playbacks or noting missing assets.
+        
+        Args:
+            index: Zero-based integer index of the record inside dataset_records.
+        """
+        # Bounds check: do nothing if index is out of range or list is empty
         if not self.dataset_records or index < 0 or index >= len(self.dataset_records):
             return
 
+        # Fetch the active record dictionary from the loaded subset
         record = self.dataset_records[index]
 
-        # Update the navigation counter and button states
+        # Get total records size for display configuration
         total = len(self.dataset_records)
+        
+        # Enable the index field to update the record counter text
         self.record_index_entry.configure(state="normal")
         self.record_index_entry.delete(0, "end")
         self.record_index_entry.insert(0, str(index + 1))
         self.record_total_label.configure(text=f"of {total}")
+        
+        # Disable navigation buttons at the boundaries of the list to prevent out-of-bounds errors
         self.prev_btn.configure(state="normal" if index > 0 else "disabled")
         self.next_btn.configure(state="normal" if index < total - 1 else "disabled")
 
-        # Clear all fields before populating
+        # Wipe all existing inputs in the workspace to prepare for the new record's properties
         self._clear_fields()
 
-        # Populate each field from the record
+        # Insert the annotator name associated with this record
         self.annotator_entry.delete(0, "end")
         self.annotator_entry.insert(0, record.get("annotator") or "")
 
+        # Set the Real/Fake classification label dropdown
         label = record.get("label") or ""
         if label:
             self.label_var.set(label)
+            # Trigger the label change event handler to load/hide subcategory options
             self._on_label_change()
 
+        # If labeled as Fake, set the subcategory news type selector dropdown
         multi_cat = record.get("multi_category") or ""
         if label == "Fake" and multi_cat in MULTI_CATEGORIES:
             self.multi_cat_var.set(multi_cat)
 
+        # Set news category and platform source dropdown variables
         self.category_var.set(record.get("category") or "")
         self.source_cat_var.set(record.get("source_category") or "")
 
+        # Insert the reference URL link or source description
         self.source_entry.delete(0, "end")
         self.source_entry.insert(0, record.get("source") or "")
 
-        # Additional notes
+        # Populate the additional annotator notes box
         self.notes_entry.delete("0.0", "end")
         notes = record.get("additional_notes") or ""
         if notes:
             self.notes_entry.insert("0.0", notes)
 
+        # Populate the article headline title box
         self.heading_entry.delete("1.0", "end")
         heading = record.get("heading") or ""
         if heading:
             self.heading_entry.insert("1.0", heading)
 
+        # Populate the core news body text box
         self.text_box.delete("1.0", "end")
         text = record.get("text") or ""
         if text:
             self.text_box.insert("1.0", text)
 
+        # Insert the confidence percentage metric value
         self.confidence_entry.delete(0, "end")
         self.confidence_entry.insert(0, record.get("annotation_confidence") or "100")
 
-        # Load images and video referenced in the record
+        # Reset media lists and missing asset references
         self.image_list.clear()
         self.video_path = None
+        self.missing_media = []
         
+        # Load and verify the attached video path if registered
         video_path_str = record.get("video_path") or ""
         if video_path_str:
             full_vid_path = SCRIPT_DIR / video_path_str
             if full_vid_path.exists():
                 self.video_path = full_vid_path
+            else:
+                # Keep track of missing file references to notify the user
+                self.missing_media.append(("video", video_path_str))
+                
+        # Parse and verify semicolon-delimited image paths
         image_paths = record.get("image_path") or ""
         if image_paths:
             for rel_path in image_paths.split(";"):
@@ -2188,21 +2423,90 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 if rel_path:
                     full_path = SCRIPT_DIR / rel_path
                     if full_path.exists():
+                        # Store verified path with a None placeholder for the PIL Image object
                         self.image_list.append((full_path, None))
+                    else:
+                        # Keep track of missing file references to notify the user
+                        self.missing_media.append(("image", rel_path))
+                        
+        # Render the image previews and trigger placeholder graphics for missing files
         self._refresh_previews()
 
-    def _check_unsaved_changes(self):
-        """Check if current review record has unsaved edits before navigating.
+    def _check_unsaved_annotate_changes(self):
+        """
+        Checks for any unsaved changes when leaving Annotate mode.
+        
+        Reviews all input fields, text areas, dropdowns, and media slots. If any 
+        contain values, prompts the user to save as a record, discard the current
+        entries, or cancel the mode switch entirely.
         
         Returns:
-            True if safe to navigate (no changes, or user chose to discard/save).
-            False if navigation should be aborted (Cancel or save failed).
+            bool: True if safe to leave (confirmed save/discard or empty fields),
+                  False if the user chose to cancel/stay.
         """
+        # Flag indicating whether the workspace has modified unsaved elements
+        changed = False
+        
+        # Sequentially check every input field to see if the user has entered any data.
+        # If any element has a non-default value, we set the changed flag to True.
+        if self.label_var.get() != "": changed = True
+        elif self.heading_entry.get("1.0", "end-1c").strip() != "": changed = True
+        elif self.text_box.get("1.0", "end-1c").strip() != "": changed = True
+        elif self.source_entry.get().strip() != "": changed = True
+        elif self.source_cat_var.get() != "": changed = True
+        elif self.category_var.get() != "": changed = True
+        elif self.multi_cat_var.get() != "": changed = True
+        # A confidence score of "100" or empty string counts as default, other values denote edits
+        elif self.confidence_entry.get().strip() not in ("", "100"): changed = True
+        elif self.notes_entry.get("0.0", "end-1c").strip() != "": changed = True
+        # Check if the user has loaded images or videos into the media bins
+        elif len(self.image_list) > 0: changed = True
+        elif self.video_path is not None: changed = True
+
+        # If changes are detected, prompt the user with a decision dialog box
+        if changed:
+            ans = messagebox.askyesnocancel("Unsaved Entry",
+                "You have started an annotation but haven't saved it.\n\n"
+                "Do you want to save it now?\n"
+                "(Yes = Save, No = Discard, Cancel = Stay)")
+            
+            # Action A: User clicked 'Cancel' (stay on the current page and abort mode toggle)
+            if ans is None:
+                return False
+            
+            # Action B: User clicked 'Yes' (commit the new annotation first)
+            elif ans is True:
+                # Attempt to save the entry. If validation checks fail, prevent leaving the mode.
+                if not self._save_entry():
+                    return False
+            
+            # Action C: User clicked 'No' (explicitly discard changes and clean the workspaces)
+            else:
+                self._clear_fields()
+                
+        # Safe to navigate
+        return True
+
+    def _check_unsaved_changes(self):
+        """
+        Checks for unsaved changes in the current review record before navigating away.
+        
+        Compares all UI input states against the original values stored in dataset_records.
+        Inspects textual fields, category dropdowns, confidence levels, additional notes,
+        image attachments, and video directories.
+        
+        Returns:
+            bool: True if navigation can proceed (no changes or confirmed save/discard),
+                  False if the navigation should be aborted.
+        """
+        # If there are no records in memory, we can navigate freely
         if not self.dataset_records or self.current_review_index < 0:
             return True
             
+        # Retrieve the original database record dictionary for direct value comparison
         record = self.dataset_records[self.current_review_index]
         
+        # Read the current values of all workspace fields in the UI
         annotator = self.annotator_entry.get().strip()
         label = self.label_var.get()
         heading = self.heading_entry.get("1.0", "end-1c").strip()
@@ -2210,30 +2514,43 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         source = self.source_entry.get().strip()
         source_category = self.source_cat_var.get()
         category = self.category_var.get()
+        # Set the subcategory classification conditionally based on label (Fake vs Real)
         multi_cat = self.multi_cat_var.get() if label == "Fake" else ("Real" if label == "Real" else "")
         confidence = self.confidence_entry.get().strip()
+        notes = self.notes_entry.get("0.0", "end-1c").strip()
         
+        # Track changes indicator
         changed = False
-        if annotator != (record.get("annotator") or ""): changed = True
-        elif label != (record.get("label") or ""): changed = True
-        elif heading != (record.get("heading") or ""): changed = True
-        elif text != (record.get("text") or ""): changed = True
-        elif source != (record.get("source") or ""): changed = True
-        elif source_category != (record.get("source_category") or ""): changed = True
-        elif category != (record.get("category") or ""): changed = True
-        elif multi_cat != (record.get("multi_category") or ""): changed = True
-        elif confidence != (record.get("annotation_confidence") or "100"): changed = True
         
+        # Check standard textual fields and combobox select values against original values
+        if annotator != (record.get("annotator") or "").strip(): changed = True
+        elif label != (record.get("label") or "").strip(): changed = True
+        elif heading != (record.get("heading") or "").strip(): changed = True
+        elif text != (record.get("text") or "").strip(): changed = True
+        elif source != (record.get("source") or "").strip(): changed = True
+        elif source_category != (record.get("source_category") or "").strip(): changed = True
+        elif category != (record.get("category") or "").strip(): changed = True
+        elif multi_cat != (record.get("multi_category") or "").strip(): changed = True
+        elif confidence != (record.get("annotation_confidence") or "100").strip(): changed = True
+        elif notes != (record.get("additional_notes") or "").strip(): changed = True
+        
+        # Check image selection list for differences if text comparison did not flag changes
         if not changed:
+            # Parse saved image paths from CSV (splitting by semicolon and replacing backslashes for path normalization)
             orig_images = [p.strip().replace("\\", "/") for p in (record.get("image_path") or "").split(";") if p.strip()]
+            
+            # An altered list length immediately denotes modified assets lists
             if len(self.image_list) != len(orig_images):
                 changed = True
             else:
+                # Zip lists together and inspect path strings element by element
                 for (path, pil_img), orig_rel_path in zip(self.image_list, orig_images):
+                    # If path is None, it is a newly pasted screenshot image in memory, denoting changes
                     if path is None:
                         changed = True
                         break
                     try:
+                        # Extract path relative to script directory to check against CSV storage pattern
                         rel = path.relative_to(SCRIPT_DIR)
                         if str(rel).replace("\\", "/") != orig_rel_path:
                             changed = True
@@ -2242,6 +2559,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                         changed = True
                         break
                 
+            # Check video references for changes
             if not changed:
                 orig_video = (record.get("video_path") or "").strip().replace("\\", "/")
                 current_video = ""
@@ -2249,90 +2567,157 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     try:
                         current_video = str(self.video_path.relative_to(SCRIPT_DIR)).replace("\\", "/")
                     except ValueError:
-                        changed = True # It's a new external video
+                        # Video path outside the local folder workspace signals a new upload change
+                        changed = True
                 
+                # Check for updates to the video path reference
                 if not changed and orig_video != current_video:
                     changed = True
 
+        # If no edits are detected, proceed with navigation
         if not changed:
             return True
             
+        # Prompt user with an action selection dialog for unsaved review edits
         response = messagebox.askyesnocancel(
             "Unsaved Changes",
             "You have unsaved changes in this record.\n\n"
             "Do you want to save them before moving?"
         )
         
-        if response is True:  # Yes — try to save
+        # User choice Yes: attempt to save the active record edits
+        if response is True:
+            # Update the CSV database silently (without showing the generic confirmation alert)
             save_ok = self._update_entry(show_success=False)
             if not save_ok:
-                # Save failed (validation error). Give the user a second
-                # chance to discard instead of trapping them.
+                # If save fails due to validation errors, offer a fallback to discard changes
+                # to prevent the user from being trapped in an infinite error loop.
                 discard = messagebox.askyesno(
                     "Save Failed",
                     "Could not save due to validation errors.\n\n"
                     "Do you want to discard your changes and continue?"
                 )
-                return discard  # True = discard & continue, False = stay
+                return discard
             return True
-        elif response is False:  # No — discard changes
+            
+        # User choice No: discard modifications and allow navigation
+        elif response is False:
             return True
-        else:  # Cancel
+            
+        # User choice Cancel: remain on the current record
+        else:
             return False
 
     def _next_record(self):
-        """Navigate to the next record in the dataset."""
+        """
+        Navigates to the next record in the dataset subset.
+        
+        If currently in Re-label mode, delegates the navigation step to the kappa
+        next record handler. Otherwise, verifies for unsaved edits in the active
+        record. If safe, increments the review index pointer and displays the record.
+        """
+        # Route to the Kappa reliability navigation handler if the application is in Re-label mode
+        if self.current_mode == "relabel":
+            self._kappa_next_record()
+            return
+            
+        # Ensure we are not already at the end of the loaded review subset
         if self.current_review_index < len(self.dataset_records) - 1:
+            # Prompt user to resolve any unsaved changes before moving to the next record
             if not self._check_unsaved_changes():
                 return
+            # Increment index pointer and refresh UI layout fields with the next record
             self.current_review_index += 1
             self._display_record(self.current_review_index)
 
     def _prev_record(self):
-        """Navigate to the previous record in the dataset."""
+        """
+        Navigates to the previous record in the dataset subset.
+        
+        If currently in Re-label mode, delegates the navigation step to the kappa
+        prev record handler. Otherwise, verifies index limits and checks for unsaved
+        changes before decrementing the review index pointer and displaying the record.
+        """
+        # Route to the Kappa reliability navigation handler if the application is in Re-label mode
+        if self.current_mode == "relabel":
+            self._kappa_prev_record()
+            return
+            
+        # Ensure we are not already at the beginning of the loaded review subset
         if self.current_review_index > 0:
+            # Prompt user to resolve any unsaved changes before moving to the previous record
             if not self._check_unsaved_changes():
                 return
+            # Decrement index pointer and refresh UI layout fields with the previous record
             self.current_review_index -= 1
             self._display_record(self.current_review_index)
 
     def _jump_to_record(self, event=None):
-        """Jump to the record index typed in the entry field."""
+        """
+        Navigates directly to a record specified by the integer input in the navigation box.
+        
+        Converts the 1-based user input into a 0-based index. Validates the index bounds,
+        verifies for unsaved edits, updates the review pointer, and displays the record.
+        Reverts the navigation input box to the current index if invalid.
+        """
+        # Route to the Kappa reliability jump handler if the application is in Re-label mode
+        if self.current_mode == "relabel":
+            self._kappa_jump_to_record(event)
+            return
+            
         try:
+            # Parse the user entry value as a 1-based record number
             val = int(self.record_index_entry.get().strip())
-            # Convert to 0-based index
+            # Convert to zero-based array index
             idx = val - 1
+            
+            # Ensure the targeted index lies within the boundaries of the active review list
             if 0 <= idx < len(self.dataset_records):
+                # Only execute jump operations if the target index differs from the active one
                 if self.current_review_index != idx:
+                    # Check for unsaved changes before executing the index jump
                     if not self._check_unsaved_changes():
-                        # Reset to current valid index
+                        # Revert input entry text back to the active record number on navigation cancel
                         self.record_index_entry.delete(0, "end")
                         self.record_index_entry.insert(0, str(self.current_review_index + 1))
                         self.focus_set()
                         return
+                    # Update index pointer and draw record data
                     self.current_review_index = idx
                     self._display_record(self.current_review_index)
-                # Unfocus the entry widget so we don't accidentally keep typing
+                # Release keyboard focus from the input field to prevent cursor navigation conflicts
                 self.focus_set()
             else:
-                # Reset to current valid index
+                # Revert to current record indicator if user inputs an out-of-range index
                 self.record_index_entry.delete(0, "end")
                 self.record_index_entry.insert(0, str(self.current_review_index + 1))
                 messagebox.showwarning("Invalid Record", f"Please enter a number between 1 and {len(self.dataset_records)}.")
         except ValueError:
-            # Reset if not a valid number
+            # Revert to current record indicator if user inputs a non-integer string
             self.record_index_entry.delete(0, "end")
             self.record_index_entry.insert(0, str(self.current_review_index + 1))
 
     def _update_entry(self, show_success=True):
-        """Validate fields and save changes to the currently displayed record.
-
-        Re-validates all required fields, processes any new images,
-        updates the in-memory record, and rewrites the CSV file.
         """
+        Validates the UI input fields and commits changes to the current database record.
+        
+        Performs field requirement checks (e.g. category, source, non-empty media/text content).
+        Copies any new external files (images or video clips) into local project storage sub-folders,
+        generating unique filenames containing labels, counts, entry UUIDs, and annotator names.
+        Saves new screenshots directly as PNGs.
+        Rewrites the main database CSV file, updates dynamic filters, and updates the stats bar.
+        
+        Args:
+            show_success: If True, displays a completion alert popup window.
+            
+        Returns:
+            bool: True if validation and disk saving succeeded, False otherwise.
+        """
+        # Abort if there are no loaded review records in memory
         if not self.dataset_records:
             return False
 
+        # Gather current string values from workspace widgets
         annotator = self.annotator_entry.get().strip()
         label = self.label_var.get()
         heading = self.heading_entry.get("1.0", "end-1c").strip()
@@ -2342,10 +2727,12 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         category = self.category_var.get()
         multi_cat = self.multi_cat_var.get()
         confidence_str = self.confidence_entry.get().strip()
+        
+        # Check for media attachments presence
         has_image = len(self.image_list) > 0
         has_media = has_image or (self.video_path is not None)
 
-        # Validate required fields
+        # Enforce validation checks on mandatory inputs
         errors = []
         if not annotator:
             errors.append("Annotator name is required.")
@@ -2357,68 +2744,83 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             errors.append("News Category is required.")
         if not source_category:
             errors.append("Source Category is required.")
+        # Ensure there is at least one modal source (text description or file attachments)
         if not text and not has_media:
             errors.append("At least one of Text, Image, or Video must be provided.")
 
+        # Parse and validate the confidence score field
         confidence = 100
         if confidence_str:
             try:
                 confidence = int(confidence_str)
+                # Bounded percentage value checks
                 if not (0 <= confidence <= 100):
                     errors.append("Annotation Confidence must be between 0 and 100.")
             except ValueError:
                 errors.append("Annotation Confidence must be a valid integer.")
 
+        # Show verification errors to the user and abort transaction if validation failed
         if errors:
             messagebox.showerror("Validation Error", "\n".join(errors))
             return False
 
+        # Map Fake News Type subclass value to Real if the authenticity label is set to Real
         if label == "Real":
             multi_cat = "Real"
 
+        # Retrieve entry ID and sanitize the annotator name for safe filename conversions
         record = self.dataset_records[self.current_review_index]
         entry_id = record.get("id") or generate_id()
         sanitized_annotator = sanitize_name(annotator)
 
-        # Process images: keep existing project images, copy new external ones
+        # Process image attachments list (keeping local paths, copying new uploads, writing screen captures)
         try:
             image_rel_paths = []
             for path, pil_img in self.image_list:
                 if path:
                     try:
+                        # If the path is already inside the local script folder, retain relative path format
                         rel = path.relative_to(SCRIPT_DIR)
                         image_rel_paths.append(str(rel).replace("\\", "/"))
                     except ValueError:
+                        # Copy new external image files into the images sub-folder
                         img_count = get_image_count() + 1
                         ext = path.suffix.lower()
+                        # Construct a unique, standard filename
                         img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
                         img_dest = IMAGES_DIR / img_filename
                         shutil.copy2(path, img_dest)
                         image_rel_paths.append(f"images/{img_filename}")
                 else:
+                    # Write pasted screenshot image objects directly to local disk as PNGs
                     img_count = get_image_count() + 1
                     img_filename = f"{label}_{img_count:05d}_{entry_id}_{sanitized_annotator}.png"
                     img_dest = IMAGES_DIR / img_filename
                     src_img = pil_img
+                    # Ensure compatibility with RGB formatting
                     if src_img.mode == "RGBA":
                         src_img = src_img.convert("RGB")
                     src_img.save(img_dest)
                     image_rel_paths.append(f"images/{img_filename}")
     
+            # Process video files attachments (copying external files if applicable)
             video_rel_path = ""
             if self.video_path:
                 try:
+                    # Retain relative path format if video is already located inside the project folders
                     rel = self.video_path.relative_to(SCRIPT_DIR)
                     video_rel_path = str(rel).replace("\\", "/")
                 except ValueError:
+                    # Copy external video file into the videos directory
                     vid_count = get_video_count() + 1
                     ext = self.video_path.suffix.lower()
+                    # Construct a unique standard video filename
                     vid_filename = f"{label}_{vid_count:05d}_{entry_id}_{sanitized_annotator}{ext}"
                     vid_dest = VIDEOS_DIR / vid_filename
                     shutil.copy2(self.video_path, vid_dest)
                     video_rel_path = f"videos/{vid_filename}"
     
-            # Update the in-memory record
+            # Assign modified UI values back to the active record dictionary
             record["annotator"] = annotator
             record["label"] = label
             record["heading"] = heading
@@ -2431,55 +2833,70 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             record["additional_notes"] = self.notes_entry.get("0.0", "end-1c").strip()
             record["image_path"] = ";".join(image_rel_paths)
             record["video_path"] = video_rel_path
+            
+            # Maintain original save timestamp or populate if missing
             if "timestamp" not in record or not record.get("timestamp"):
                 record["timestamp"] = datetime.now().isoformat()
     
+            # Commit the updated list values to dataset.csv
             self._rewrite_csv()
         except Exception as e:
+            # Notify on OS-level errors (like files locked by external editors)
             messagebox.showerror("Update Error", f"Failed to update entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return False
 
-        # Apply filter again to reflect changes visually and filter out records that no longer match
+        # Re-apply filters to refresh the active records list (and automatically filter out records that no longer match)
         self._apply_advanced_filter(keep_index=True)
+        
+        # Display completion alert window if requested
         if show_success:
             messagebox.showinfo("Update Complete",
                 f"Record {self.current_review_index + 1} updated successfully!")
         return True
 
     def _delete_entry(self):
-        """Delete the currently displayed record after user confirmation.
-
-        Removes the record from memory, rewrites the CSV, and adjusts
-        the review index. If no records remain, switches back to Annotate mode.
         """
+        Deletes the currently displayed record from the database after confirmation.
+        
+        Pops the record from the active subset and general list, rewrites the dataset CSV, 
+        and updates active indices. Returns to Annotate mode if no entries remain.
+        """
+        # Abort if there are no loaded review records in memory
         if not self.dataset_records:
             return
 
+        # Double check delete intent by prompting a warning dialog window
         confirm = messagebox.askyesno("Confirm Delete",
             f"Are you sure you want to delete Record {self.current_review_index + 1}?\n\n"
             "This action cannot be undone.")
         if not confirm:
             return
 
+        # Pop the target record from the active review subset list
         deleted_record = self.dataset_records.pop(self.current_review_index)
         
-        # Also remove from all_dataset_records
+        # Locate the record's index in the master dataset tracking array by matching unique entry IDs
         all_idx = next((i for i, r in enumerate(self.all_dataset_records) if (r.get("id") or "") == (deleted_record.get("id") or "")), -1)
         if all_idx >= 0:
+            # Pop the record from the master tracking list in memory
             self.all_dataset_records.pop(all_idx)
 
+        # Attempt to save the deletion modification to disk
         try:
             self._rewrite_csv()
         except Exception as e:
-            # Revert the deletion in memory since saving failed
+            # Rollback layout lists in memory if the save operation fails (e.g. permission lock errors)
+            # to protect data integrity and avoid sync discrepancies.
             self.dataset_records.insert(self.current_review_index, deleted_record)
             if all_idx >= 0:
                 self.all_dataset_records.insert(all_idx, deleted_record)
             messagebox.showerror("Delete Error", f"Failed to delete entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return
 
+        # Re-apply filter settings to refresh review index pointers and layout lists
         self._apply_advanced_filter(keep_index=True)
 
+        # Revert view back to Annotate Mode if no records remain in the database
         if not self.all_dataset_records:
             messagebox.showinfo("No Records", "All records have been deleted.")
             self.mode_switcher.set("📝 Annotate")
@@ -2487,19 +2904,27 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             return
 
     def _rewrite_csv(self):
-        """Rewrite the entire CSV file from the in-memory records list."""
+        """
+        Rewrites the entire dataset CSV file from the general records database list.
+        """
+        # Open CSV file with standard settings: newline protection and utf-8 encoding support
         with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            # Construct standard writer, ignoring extra unexpected keys in record dictionaries
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+            # Write column headers row first
             writer.writeheader()
+            # Serialize each record dictionary to file rows sequentially
             for record in self.all_dataset_records:
                 writer.writerow(record)
 
     def _save_draft(self):
-        """Save the current annotation field values as a draft.
-
-        Called when switching from Annotate to Review mode so the user's
-        in-progress work is not lost.
         """
+        Saves the current values of all annotation fields to a temporary draft cache.
+        
+        This cache prevents the annotator from losing in-progress work when toggling
+        between Annotate mode and Review/Re-label modes.
+        """
+        # Take a snapshot of the workspace inputs and save them in memory
         self.draft_annotation = {
             "annotator": self.annotator_entry.get().strip(),
             "label": self.label_var.get(),
@@ -2511,152 +2936,988 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             "text": self.text_box.get("1.0", "end-1c").strip(),
             "confidence": self.confidence_entry.get().strip(),
             "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
+            # Copy image_list reference to preserve pasted screenshots in memory
             "images": list(self.image_list),
             "video": self.video_path,
         }
 
     def _restore_draft(self):
-        """Restore previously saved annotation field values.
-
-        Called when switching from Review back to Annotate mode.
-        If no draft was saved, clears all fields instead.
         """
+        Restores the cached draft annotation values to the UI input fields.
+        
+        This is called when returning to Annotate mode. If no draft has been cached,
+        it resets all input fields to their defaults.
+        """
+        # If no draft is cached, just clear fields to their defaults and return
         if self.draft_annotation is None:
             self._clear_fields()
             return
 
+        # Load draft and reset internal draft cache reference to release memory
         draft = self.draft_annotation
         self.draft_annotation = None
 
+        # Wipe workspace controls first
         self._clear_fields()
+        
+        # Populate annotator name entry field
         self.annotator_entry.delete(0, "end")
         self.annotator_entry.insert(0, draft["annotator"])
 
+        # Populate label fields and trigger updates
         if draft["label"]:
             self.label_var.set(draft["label"])
             self._on_label_change()
 
+        # Populate subtype dropdown menu options if applicable
         if draft["multi_cat"]:
             self.multi_cat_var.set(draft["multi_cat"])
 
+        # Set category and source drop-down variables
         self.category_var.set(draft["category"])
         self.source_cat_var.set(draft["source_category"])
 
+        # Populate source description input
         self.source_entry.delete(0, "end")
         self.source_entry.insert(0, draft["source"])
 
+        # Restore heading title text content
         self.heading_entry.delete("1.0", "end")
         if draft["heading"]:
             self.heading_entry.insert("1.0", draft["heading"])
 
+        # Restore body text description content
         self.text_box.delete("1.0", "end")
         if draft["text"]:
             self.text_box.insert("1.0", draft["text"])
 
+        # Restore confidence rating value
         self.confidence_entry.delete(0, "end")
         self.confidence_entry.insert(0, draft["confidence"] or "100")
 
-        # Restore additional notes
+        # Restore additional notes text area content
         self.notes_entry.delete("0.0", "end")
         notes = draft.get("additional_notes", "")
         if notes:
             self.notes_entry.insert("0.0", notes)
 
+        # Restore attachments lists and refresh UI previews
         self.image_list = draft["images"]
         self.video_path = draft.get("video")
         self._refresh_previews()
 
     def _get_resource_path(self, relative_path):
-        """Get absolute path to resource, works for dev and for PyInstaller."""
+        """
+        Resolves paths to internal static resources, supporting both development and production.
+        
+        This utility resolves file references when running in python environments or packaged
+        inside PyInstaller single-file executables (referencing the _MEIPASS extraction root).
+        
+        Args:
+            relative_path: Relative path string to the desired resource file.
+            
+        Returns:
+            str: Resolved absolute path.
+        """
         try:
-            # PyInstaller creates a temp folder and stores path in _MEIPASS
+            # When packaged with PyInstaller, assets are unpacked to a temporary folder
+            # whose path is stored in the sys._MEIPASS system attribute.
             base_path = Path(sys._MEIPASS)
         except Exception:
+            # During local development, resolve the file relative to the script directory
             base_path = Path(__file__).parent.resolve()
         
         return str(base_path / relative_path)
 
     def _check_for_updates(self):
-        """Check GitHub for a new release tag in the background."""
+        """
+        Checks for a new release of the tool on GitHub in a background thread.
+        
+        Reads version.json to parse the local version string, performs a GET request
+        to the GitHub releases API endpoint, and triggers the update alert window if a newer
+        release tag is detected.
+        """
         try:
-            # Load current version
+            # Locate and load the version.json file to retrieve the local build version
             version_file = self._get_resource_path("version.json")
             if not os.path.exists(version_file):
                 return
             
             with open(version_file, "r") as f:
                 data = json.load(f)
+                # Parse and normalize the local version string (e.g. converting "v1.0.0" to "1.0.0")
                 current_version = data.get("version", "v1.0.0").strip().lower().lstrip('v')
 
-            # Fetch latest version from GitHub API
+            # Fetch the latest release metadata from GitHub repository API endpoint
             url = "https://api.github.com/repos/Faysal1000/fake-news-annotation-tool/releases/latest"
             response = requests.get(url, timeout=5)
             if response.status_code == 200:
                 latest_tag = response.json().get("tag_name")
                 if latest_tag:
                     latest_normalized = latest_tag.strip().lower().lstrip('v')
+                    # If the latest remote release tag differs from the local build, show update popup
                     if latest_normalized != current_version:
-                        # Update needed! Safely call the UI method from the main thread
+                        # Schedule the update popup display on the main UI thread after 2 seconds
                         self.after(2000, lambda: self._show_update_popup(latest_tag))
         except Exception as e:
+            # Silently log update check errors since updates checking is non-critical for basic operation
             print(f"Update check failed (this is non-fatal): {e}")
 
     def _show_update_popup(self, latest_version):
-        """Show a popup with the OS-specific command to update the app."""
+        """
+        Renders a dialog alert containing the command to fetch and install the latest update.
+        
+        Determines the current operating system (macOS Intel vs macOS Apple Silicon, Windows,
+        Linux) to display the correct terminal commands to download, extract, and replace the 
+        tool binary. Provides a button to copy the command block to the system clipboard.
+        
+        Args:
+            latest_version: The version string of the newly available release.
+        """
+        # Create a modal-like TopLevel tkinter dialog window
         popup = ctk.CTkToplevel(self)
         popup.title("Update Available")
         popup.geometry("600x350")
         popup.attributes("-topmost", True)
         
-        # Center the popup relative to main window
+        # Center the popup window relative to the application's current workspace coordinates
         popup.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() // 2) - 300
         y = self.winfo_y() + (self.winfo_height() // 2) - 175
         popup.geometry(f"+{x}+{y}")
         
+        # Render dialog title and descriptive labels
         ctk.CTkLabel(popup, text=f"🎉 A new version ({latest_version}) is available!", 
                      font=ctk.CTkFont(size=20, weight="bold")).pack(pady=(20, 10))
         
         ctk.CTkLabel(popup, text="Please update to get the latest features and bug fixes.", 
                      font=ctk.CTkFont(size=14)).pack(pady=(0, 15))
         
-        # Determine OS and Architecture
+        # Detect host operating system and hardware architecture
         system = platform.system()
         machine = platform.machine().lower()
         
+        # Construct platform-specific shell execution commands to automate update downloads and installations
         if system == "Darwin":
+            # For Apple macOS environments, branch command scripts based on processor type (M-series Silicon vs Intel)
             if "arm" in machine or "aarch" in machine:
                 command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-AppleSilicon.zip && unzip -o FakeNewsAnnotator-macOS-AppleSilicon.zip && rm FakeNewsAnnotator-macOS-AppleSilicon.zip'
             else:
                 command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-macOS-Intel.zip && unzip -o FakeNewsAnnotator-macOS-Intel.zip && rm FakeNewsAnnotator-macOS-Intel.zip'
         elif system == "Windows":
+            # For Microsoft Windows environments, construct a command to run in cmd shell
             command = 'mkdir "%USERPROFILE%\\Desktop\\Fake News Dataset" 2>nul & cd "%USERPROFILE%\\Desktop\\Fake News Dataset" & curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Windows.exe'
         else:
+            # Fallback for Linux environments: download release binary and mark it executable
             command = 'mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && curl -L -O https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download/FakeNewsAnnotator-Linux && chmod +x FakeNewsAnnotator-Linux'
 
-        # Textbox to show the command
+        # Render read-only text box for command string display
         cmd_box = ctk.CTkTextbox(popup, height=80, font=ctk.CTkFont(family="Courier", size=12))
         cmd_box.pack(fill="x", padx=20, pady=10)
         cmd_box.insert("0.0", command)
-        cmd_box.configure(state="disabled") # Make it read-only
+        cmd_box.configure(state="disabled")
         
         def copy_to_clipboard():
+            # Copy command text to the OS clipboard helper
             self.clipboard_clear()
             self.clipboard_append(command)
             self.update()
+            # Provide temporary visual feedback on successful clipboard copy
             copy_btn.configure(text="✅ Copied!")
             self.after(2000, lambda: copy_btn.configure(text="📋 Copy Command"))
             
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=20)
         
+        # Render Clipboard Copy button
         copy_btn = ctk.CTkButton(btn_frame, text="📋 Copy Command", command=copy_to_clipboard)
         copy_btn.pack(side="left", padx=10)
         
+        # Render Close button to exit the popup window
         ctk.CTkButton(btn_frame, text="Close", fg_color="transparent", border_width=1, 
                       command=popup.destroy).pack(side="left", padx=10)
 
+    # RE-LABEL (KAPPA) MODE
 
+    def _pack_radios_vertical(self):
+        """
+        Arranges fake news sub-classification radio buttons vertically.
+        
+        Used to stack buttons inside narrow columns (e.g. in Re-label mode).
+        """
+        # Detach radio button widgets from their horizontal positioning layouts first
+        self.radio_misinfo.pack_forget()
+        self.radio_satire.pack_forget()
+        self.radio_clickbait.pack_forget()
+        
+        # Re-pack buttons vertically to fit inside the narrow sidebar during Re-label mode
+        self.radio_misinfo.pack(anchor="w", pady=(10, 10))
+        self.radio_satire.pack(anchor="w", pady=(0, 10))
+        self.radio_clickbait.pack(anchor="w", pady=(0, 10))
+
+    def _pack_radios_horizontal(self):
+        """
+        Arranges fake news sub-classification radio buttons horizontally.
+        
+        Used for regular, wide window layout distributions.
+        """
+        # Detach radio button widgets from their vertical alignment schemes first
+        self.radio_misinfo.pack_forget()
+        self.radio_satire.pack_forget()
+        self.radio_clickbait.pack_forget()
+        
+        # Pack buttons side-by-side to distribute them horizontally across wide containers
+        self.radio_misinfo.pack(side="left", padx=(0, 12))
+        self.radio_satire.pack(side="left", padx=(0, 12))
+        self.radio_clickbait.pack(side="left")
+
+    def _enter_relabel_mode(self):
+        """
+        Initializes and sets up the Re-label mode for inter-rater agreement (Kappa) analysis.
+        
+        This workflow:
+        - Ingests the secondary rating target database file (`relabeling_for_kappa.csv`).
+        - Automatically hides input components that are only relevant for standard annotation 
+          (e.g., categories, source descriptions, notes) to establish a clean interface.
+        - Pre-fills the annotator entry field with the configuration-persisted rating name.
+        - Deactivates heading title and core text fields to make article content read-only.
+        - Automatically jumps to the first record that has not yet been rated by the active annotator.
+        - Formats the left-hand text column wider and right-hand options column narrower.
+        - Vertically stacks news type option buttons to fit the narrow control sidebar.
+        - Refreshes reliability stats badges to reflect progress count.
+        """
+        # Load the inter-rater reliability database file.
+        # Fall back to standard annotate mode if the target file cannot be processed or is empty.
+        if not self._load_kappa_csv():
+            self.mode_switcher.set("📝 Annotate")
+            self.current_mode = "annotate"
+            self._restore_draft()
+            self._update_stats()
+            return
+
+        # Hide inputs and category controls not used in blind reviews to keep raters unbiased.
+        self._hide_annotate_only_fields()
+
+        # Clear active entry fields to remove any leftovers from previous records
+        self._clear_fields()
+
+        # Pre-populate reviewer/annotator name using the saved configuration file helper
+        self.annotator_entry.delete(0, "end")
+        saved_name = load_config()
+        if saved_name:
+            self.annotator_entry.insert(0, saved_name)
+
+        # Draw review navigation panel bar and hide advanced search filtering buttons
+        self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
+        self.filter_btn.pack_forget()
+        self.filter_indicator.pack_forget()
+
+        # Set up primary button actions and hide secondary controls (like Delete or Clear All)
+        self.primary_btn.configure(text="💾  Save Decision",
+                                    command=self._save_kappa_decision)
+        self.primary_btn.pack_configure(padx=(0, 0))
+        self.secondary_btn.pack_forget()
+
+        # Deactivate modification access to primary textual fields (heading and main body text)
+        # to ensure raters cannot modify the news content.
+        self.heading_entry.configure(state="disabled")
+        self.text_box.configure(state="disabled")
+
+        # Resume rating progress from the first uncompleted sample row associated with this reviewer name
+        annotator = self.annotator_entry.get().strip()
+        start_idx = self._find_first_unlabeled(annotator)
+        self.current_kappa_index = start_idx
+
+        # Restructure column grid weights to make the text reading column wider (weight 3)
+        # and the right-hand options column narrower (weight 1).
+        self.content_container.columnconfigure(0, weight=3)
+        self.content_container.columnconfigure(1, weight=1)
+
+        # Align bottom bar navigation column weights symmetrically with the columns above
+        self.bottom_bar.columnconfigure(0, weight=3, uniform="btm")
+        self.bottom_bar.columnconfigure(1, weight=1, uniform="btm")
+        
+        # Hide category frames to conserve sidebar space
+        self.category_stats_frame.pack_forget()
+
+        # Arrange Fake News subcategory radio buttons vertically to fit the narrow sidebar
+        self._pack_radios_vertical()
+
+        # Load reliability statistics and display target record
+        self._update_kappa_stats()
+        if self.kappa_records:
+            self._display_kappa_record(self.current_kappa_index)
+
+    def _exit_relabel_mode(self):
+        """
+        Cleans up layouts and re-enables standard workspace fields when leaving Re-label mode.
+        
+        This resets input text modifications states, restores normal equal column widths, 
+        restores category lists visibilities, resets option buttons orientation to horizontal, 
+        and resets navigation pointer frames states.
+        """
+        # Restore horizontal category list layout frame
+        self.category_stats_frame.pack(fill="x", pady=(0, 6), after=self.stats_frame)
+
+        # Restore normal editing access to headline and text fields
+        self.heading_entry.configure(state="normal")
+        self.text_box.configure(state="normal")
+
+        # Hide review navigation layouts
+        self.nav_frame.grid_forget()
+
+        # Clear inter-rater variables in memory
+        self.kappa_records = []
+        self.kappa_csv_columns = []
+        self.current_kappa_index = 0
+
+        # Reset column layout weights to equal distribution (1:1 ratio)
+        self.content_container.columnconfigure(0, weight=1, uniform="col")
+        self.content_container.columnconfigure(1, weight=1, uniform="col")
+
+        # Reset bottom bar layout weights to equal distribution
+        self.bottom_bar.columnconfigure(0, weight=1, uniform="btm")
+        self.bottom_bar.columnconfigure(1, weight=1, uniform="btm")
+
+        # Restore horizontal radio button layout orientation
+        self._pack_radios_horizontal()
+
+    def _restore_annotate_fields(self):
+        """
+        Restores all input frames that were hidden to support the Re-label layout.
+        
+        Iterates over the widget references cached during the layout switch and calls pack
+        with their original geometry parameters.
+        """
+        # Iterate through cached widgets that were hidden during relabel mode setup
+        if hasattr(self, '_hidden_relabel_widgets'):
+            for widget, pack_info in self._hidden_relabel_widgets:
+                try:
+                    # Restore widget geometry using stored packing configurations
+                    widget.pack(**pack_info)
+                except Exception:
+                    pass
+            # Wipe cache list to clean up memory
+            self._hidden_relabel_widgets = []
+
+    def _hide_annotate_only_fields(self):
+        """
+        Hides UI widgets that are not relevant during blind inter-rater reliability rating.
+        
+        Iterates through the right-hand container components, identifying and packing-forgetting 
+        widgets that do not match the annotator name entry or label toggles (such as topic categories, 
+        source medium dropdowns, article URLs, confidence levels, or personal comments).
+        Also hides media browse and paste options to enforce read-only viewing boundaries.
+        """
+        self._hidden_relabel_widgets = []
+        keep_widgets = set()
+        right_children = list(self.right_col.winfo_children())
+
+        # Traverse right sidebar frames to isolate annotator and label inputs
+        found_annotator = False
+        found_label = False
+
+        for i, child in enumerate(right_children):
+            is_section_frame = False
+            section_text = ""
+            if isinstance(child, ctk.CTkFrame):
+                # Search frames for title text matching key headers
+                for sub in child.winfo_children():
+                    if isinstance(sub, ctk.CTkLabel):
+                        t = sub.cget("text")
+                        if t:
+                            section_text = t
+                            is_section_frame = True
+                            break
+
+            if is_section_frame:
+                # Retain the Annotator Name section frame
+                if "Annotator" in section_text:
+                    found_annotator = True
+                    found_label = False
+                    keep_widgets.add(child)
+                    continue
+                # Retain the Authenticity Label section frame
+                elif "Authenticity" in section_text:
+                    found_annotator = False
+                    found_label = True
+                    keep_widgets.add(child)
+                    continue
+                else:
+                    found_annotator = False
+                    found_label = False
+
+            # Keep the annotator entry field
+            if found_annotator and child == self.annotator_entry:
+                keep_widgets.add(child)
+                found_annotator = False
+                continue
+
+            # Keep the parent container holding the Fake/Real buttons
+            if found_label and isinstance(child, ctk.CTkFrame):
+                keep_widgets.add(child)
+                found_label = False
+                continue
+
+            # Keep the fine-grained type frame and status indicator label
+            if child in (self.multi_cat_frame, self.done_indicator_frame):
+                keep_widgets.add(child)
+                continue
+
+        # Hide widgets not selected for retention, saving packing configurations for recovery
+        for child in right_children:
+            if child not in keep_widgets:
+                pack_info = child.pack_info() if child.winfo_manager() == "pack" else None
+                if pack_info:
+                    restore_info = {
+                        k: v for k, v in pack_info.items()
+                        if k in ('side', 'fill', 'expand', 'padx', 'pady', 'anchor',
+                                 'ipadx', 'ipady')
+                    }
+                    self._hidden_relabel_widgets.append((child, restore_info))
+                    child.pack_forget()
+
+        # Hide browse and copy buttons frame in the media attachments panel
+        for child in self.left_col.winfo_children():
+            if isinstance(child, ctk.CTkFrame):
+                sub_children = child.winfo_children()
+                # Detect the media actions frame by checking if it contains the browse buttons
+                has_browse = any(
+                    isinstance(sc, ctk.CTkButton) and "Browse" in (sc.cget("text") or "")
+                    for sc in sub_children
+                )
+                if has_browse:
+                    pack_info = child.pack_info() if child.winfo_manager() == "pack" else None
+                    if pack_info:
+                        restore_info = {
+                            k: v for k, v in pack_info.items()
+                            if k in ('side', 'fill', 'expand', 'padx', 'pady', 'anchor',
+                                     'ipadx', 'ipady')
+                        }
+                        self._hidden_relabel_widgets.append((child, restore_info))
+                        child.pack_forget()
+                    break
+
+    def _load_kappa_csv(self):
+        """
+        Ingests the secondary annotation database file into memory.
+        
+        Returns:
+            bool: True if loaded successfully, False if missing/empty.
+        """
+        # Verify that the Kappa CSV target path exists on disk and is not empty
+        if not KAPPA_CSV_PATH.exists() or KAPPA_CSV_PATH.stat().st_size == 0:
+            messagebox.showinfo(
+                "No Kappa Data",
+                f"Kappa re-labeling CSV not found:\n{KAPPA_CSV_PATH}\n\n"
+                "Run generate_kappa_sample.py first to create it."
+            )
+            return False
+
+        # Reset the memory records array
+        self.kappa_records = []
+        
+        # Read the Kappa dataset records from file
+        with open(KAPPA_CSV_PATH, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            # Cache the current columns header list
+            self.kappa_csv_columns = list(reader.fieldnames) if reader.fieldnames else []
+            for row in reader:
+                self.kappa_records.append(row)
+
+        # Alert if the file contains only headers but no data rows
+        if not self.kappa_records:
+            messagebox.showinfo("No Kappa Data",
+                "The kappa CSV file is empty.\n"
+                "Run generate_kappa_sample.py first to populate it.")
+            return False
+
+        return True
+
+    def _find_first_unlabeled(self, annotator_name):
+        """
+        Finds the index of the first record in the list that has not been rated by this annotator.
+        
+        Args:
+            annotator_name: String name identifying the annotator.
+            
+        Returns:
+            int: Zero-based record index, or 0 if all have been rated or name is blank.
+        """
+        # Default to index 0 if the annotator name field is empty or no records are loaded
+        if not annotator_name or not self.kappa_records:
+            return 0
+
+        # Sanitize the input name to form the correct reviewer column prefix
+        sanitized = sanitize_name(annotator_name)
+        label_col = f"{sanitized}_label"
+
+        # Search rows sequentially for a blank entry in this annotator's label column
+        for i, record in enumerate(self.kappa_records):
+            value = (record.get(label_col) or "").strip()
+            # The first empty string value represents the first unrated record location
+            if not value:
+                return i
+
+        # Fallback to starting index 0 if the annotator has completed all records
+        return 0
+
+    def _display_kappa_record(self, index):
+        """
+        Populates UI display fields with data from a specific record in Re-label mode.
+        
+        Loads article headline and body text into read-only display fields, refreshes image
+        and video media previews, and checks if the active annotator has already rated this
+        item. If a rating is present, pre-loads the label and sub-category inputs and shows 
+        the completed badge.
+        
+        Args:
+            index: Zero-based integer index of the record inside kappa_records.
+        """
+        # Bounds check: do nothing if index is out of range or list is empty
+        if not self.kappa_records or index < 0 or index >= len(self.kappa_records):
+            return
+
+        # Fetch the active record dictionary from the Kappa list
+        record = self.kappa_records[index]
+        total = len(self.kappa_records)
+
+        # Update the index counter entry text field
+        self.record_index_entry.configure(state="normal")
+        self.record_index_entry.delete(0, "end")
+        self.record_index_entry.insert(0, str(index + 1))
+        self.record_total_label.configure(text=f"of {total}")
+        
+        # Disable navigation buttons at the boundaries of the list to prevent out-of-bounds errors
+        self.prev_btn.configure(state="normal" if index > 0 else "disabled")
+        self.next_btn.configure(state="normal" if index < total - 1 else "disabled")
+
+        # Clear the label selector dropdown inputs
+        self.label_var.set("")
+        self._update_label_toggles()
+        self.multi_cat_frame.pack_forget()
+        self.multi_cat_var.set("")
+
+        # Temporarily enable heading text box to insert content, then set to read-only
+        self.heading_entry.configure(state="normal")
+        self.heading_entry.delete("1.0", "end")
+        heading = record.get("heading") or ""
+        if heading:
+            self.heading_entry.insert("1.0", heading)
+        self.heading_entry.configure(state="disabled")
+
+        # Temporarily enable news text box to insert content, then set to read-only
+        self.text_box.configure(state="normal")
+        self.text_box.delete("1.0", "end")
+        text = record.get("text") or ""
+        if text:
+            self.text_box.insert("1.0", text)
+        self.text_box.configure(state="disabled")
+
+        # Reset media lists and missing asset references
+        self.image_list.clear()
+        self.video_path = None
+        self.missing_media = []
+
+        # Load and verify the attached video path if registered
+        video_path_str = record.get("video_path") or ""
+        if video_path_str:
+            full_vid_path = SCRIPT_DIR / video_path_str
+            if full_vid_path.exists():
+                self.video_path = full_vid_path
+            else:
+                # Keep track of missing file references to notify the user
+                self.missing_media.append(("video", video_path_str))
+
+        # Parse and verify semicolon-delimited image paths
+        image_paths = record.get("image_path") or ""
+        if image_paths:
+            for rel_path in image_paths.split(";"):
+                rel_path = rel_path.strip()
+                if rel_path:
+                    full_path = SCRIPT_DIR / rel_path
+                    if full_path.exists():
+                        # Store verified path with a None placeholder for the PIL Image object
+                        self.image_list.append((full_path, None))
+                    else:
+                        # Keep track of missing file references to notify the user
+                        self.missing_media.append(("image", rel_path))
+                        
+        # Render the image previews and trigger placeholder graphics for missing files
+        self._refresh_previews()
+
+        # Check if the active annotator has already rated this item
+        annotator = self.annotator_entry.get().strip()
+        is_reviewed = False
+        if annotator:
+            sanitized = sanitize_name(annotator)
+            label_col = f"{sanitized}_label"
+            multi_col = f"{sanitized}_multi_category"
+
+            existing_label = (record.get(label_col) or "").strip()
+            existing_multi = (record.get(multi_col) or "").strip()
+
+            # Pre-load the label and sub-category inputs if a rating is present
+            if existing_label:
+                is_reviewed = True
+                self.label_var.set(existing_label)
+                self._on_label_change()
+                if existing_label == "Fake" and existing_multi in MULTI_CATEGORIES:
+                    self.multi_cat_var.set(existing_multi)
+                
+        # Draw the visual completed badge if the record has been reviewed by the active user
+        if is_reviewed:
+            if self.reviewed_badge_img:
+                self.done_label.configure(image=self.reviewed_badge_img, text="")
+            else:
+                self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+        else:
+            self.done_label.configure(image=None, text="")
+            
+        # Repack the indicator frame to refresh visual layout hierarchies
+        self.done_indicator_frame.pack(side="bottom", expand=True, fill="both", padx=12, pady=(10, 20))
+
+        # Recalculate kappa rating stats
+        self._update_kappa_stats()
+
+    def _save_kappa_decision(self, auto_advance=True):
+        """
+        Saves the rating decision for the current record.
+        
+        Writes the ratings to `{annotator_name}_label` and `{annotator_name}_multi_category`
+        columns inside `relabeling_for_kappa.csv`. Automatically adds columns to the header if new.
+        
+        Args:
+            auto_advance: If True, moves to the next record in the queue after a successful save.
+            
+        Returns:
+            bool: True if decision saved successfully, False if validation failed.
+        """
+        # Abort if no kappa records are loaded in memory
+        if not self.kappa_records:
+            return False
+
+        # Gather inputs from workspace widgets
+        annotator = self.annotator_entry.get().strip()
+        label = self.label_var.get()
+        multi_cat = self.multi_cat_var.get()
+
+        # Validate entries
+        errors = []
+        if not annotator:
+            errors.append("Annotator name is required.")
+        if not label:
+            errors.append("Label (Fake/Real) must be selected.")
+        if label == "Fake" and not multi_cat:
+            errors.append("Fake News Type (Misinformation/Satire/Clickbait) must be selected.")
+
+        # Display errors window if validation checks failed
+        if errors:
+            messagebox.showerror("Validation Error", "\n".join(errors))
+            return False
+
+        # Set multi-category value to Real if the authenticity label is set to Real
+        if label == "Real":
+            multi_cat = "Real"
+
+        # Cache active username in config persistence file
+        save_config(annotator)
+
+        # Sanitize name to build dynamic column headers
+        sanitized = sanitize_name(annotator)
+        label_col = f"{sanitized}_label"
+        multi_col = f"{sanitized}_multi_category"
+
+        # Add new column headers to list if this is the first item reviewed by this annotator
+        if label_col not in self.kappa_csv_columns:
+            self.kappa_csv_columns.append(label_col)
+        if multi_col not in self.kappa_csv_columns:
+            self.kappa_csv_columns.append(multi_col)
+
+        # Update record row in memory
+        record = self.kappa_records[self.current_kappa_index]
+        record[label_col] = label
+        record[multi_cat] = multi_cat
+
+        # Commit memory updates to disk file
+        try:
+            self._rewrite_kappa_csv()
+        except Exception as e:
+            messagebox.showerror(
+                "Save Error",
+                f"Failed to save decision. Please make sure the kappa CSV "
+                f"is not open in another program.\n\nError: {e}"
+            )
+            return False
+
+        # Refresh stats bar metrics
+        self._update_kappa_stats()
+        
+        # Display completed rating indicator badge
+        if self.reviewed_badge_img:
+            self.done_label.configure(image=self.reviewed_badge_img, text="")
+        else:
+            self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+
+        # Repack the indicator frame to refresh visuals
+        if not auto_advance:
+            self.done_indicator_frame.pack(side="bottom", expand=True, fill="both", padx=12, pady=(10, 20))
+
+        # Handle auto advance navigation transitions
+        if auto_advance:
+            if self.current_kappa_index < len(self.kappa_records) - 1:
+                self.current_kappa_index += 1
+                self._display_kappa_record(self.current_kappa_index)
+            else:
+                # Notify user when the end of the reliability review queue is reached
+                # Trigger a popup message informing the user that they have successfully annotated 
+                # every sample in the kappa queue. This ensures clear closure for the rating session.
+                messagebox.showinfo("Done",
+                    "All items have been labeled!\n"
+                    "You can navigate back to review your decisions.")
+                    
+        # Return True to indicate that the record saving operation was completed successfully
+        return True
+
+    def _rewrite_kappa_csv(self):
+        """
+        Rewrites the kappa CSV file to commit updated decisions from memory to disk.
+        
+        This method aggregates the dynamic annotator columns (ratings) registered during
+        the session across all loaded records. It constructs an ordered list of headers,
+        ensuring that standard dataset fields remain first in the column order, followed
+        by individual reviewer rating columns sorted alphabetically. Finally, it uses
+        csv.DictWriter to safely overwrite the target CSV file with the updated records.
+        """
+        # Collect all existing columns currently present across any of the kappa record dicts
+        all_cols = set(self.kappa_csv_columns)
+        for record in self.kappa_records:
+            all_cols.update(record.keys())
+
+        # Segregate the columns to maintain a clean layout: standard fields are placed first,
+        # and extra reviewer annotations are grouped and sorted alphabetically at the end.
+        base_cols = [c for c in CSV_COLUMNS if c in all_cols]
+        extra_cols = sorted([c for c in all_cols if c not in CSV_COLUMNS])
+        ordered_cols = base_cols + extra_cols
+
+        # Update the application's column cache with the finalized sequence
+        self.kappa_csv_columns = ordered_cols
+
+        # Open the target reliability CSV file with write access and UTF-8 encoding
+        with open(KAPPA_CSV_PATH, "w", newline="", encoding="utf-8") as f:
+            # Instantiate a DictWriter mapper configuration that ignores extraneous keys
+            writer = csv.DictWriter(f, fieldnames=ordered_cols, extrasaction="ignore")
+            
+            # Write the column headers as the first line of the file
+            writer.writeheader()
+            
+            # Iterate through the in-memory records and write each row to the file
+            for record in self.kappa_records:
+                row = {col: record.get(col, "") for col in ordered_cols}
+                writer.writerow(row)
+
+    def _update_kappa_stats(self):
+        """
+        Calculates and updates the stats panel specifically for the Re-label workspace.
+        
+        To prevent annotator bias during blind reliability checks, this method suppresses
+        the distribution counts of Fake/Real labels and topic categories. Instead, it computes:
+        - The total number of items loaded in the Kappa agreement queue.
+        - The number of records already rated by the current active reviewer.
+        - The number of pending records remaining for the active reviewer.
+        It then clears existing stats badges and renders new cards for these metrics.
+        """
+        # Remove any existing stat widgets inside the container frames to prevent layout overlap
+        for widget in self.stats_frame.winfo_children():
+            widget.destroy()
+        for widget in self.category_stats_frame.winfo_children():
+            widget.destroy()
+
+        # Retrieve the current status bounds
+        total = len(self.kappa_records)
+        annotator = self.annotator_entry.get().strip()
+
+        # If a valid annotator name has been entered, count completed labels for that reviewer
+        if annotator:
+            sanitized = sanitize_name(annotator)
+            label_col = f"{sanitized}_label"
+            labeled = sum(1 for r in self.kappa_records
+                          if (r.get(label_col) or "").strip())
+            remaining = total - labeled
+        else:
+            # Revert to defaults if the annotator entry field is blank
+            labeled = 0
+            remaining = total
+
+        # Render modern styled badges for total, completed, and pending records
+        self._create_stat_badge(self.stats_frame, "Total Items", total, "#3498db")
+        self._create_stat_badge(self.stats_frame, "Labeled", labeled, "#2ecc71")
+        self._create_stat_badge(self.stats_frame, "Remaining", remaining, "#e67e22")
+
+        # Request tkinter to recalculate and refresh geometry containers
+        self.stats_frame.update_idletasks()
+        self.category_stats_frame.update_idletasks()
+        
+        # Trigger the flow layout arrangement logic on the frames
+        self.stats_frame._arrange()
+        self.category_stats_frame._arrange()
+
+    def _check_unsaved_kappa_changes(self):
+        """
+        Verifies if there are unsaved rating decisions on the active Kappa record.
+        
+        This method compares the current selection values in the dropdown widgets (such
+        as Label and Fake News Type) against the committed values stored in the record dict.
+        If a mismatch is detected, it raises a confirmation popup dialog allowing the user
+        to save changes, discard them, or cancel the navigation action entirely.
+        
+        Returns:
+            bool: True if it is safe to proceed with navigation (changes saved or discarded),
+                  False if the user chose to cancel the navigation.
+        """
+        # If no kappa records are loaded or the index is invalid, no unsaved work exists
+        if not self.kappa_records or self.current_kappa_index < 0:
+            return True
+
+        # Fetch the active record dictionary and current annotator name
+        record = self.kappa_records[self.current_kappa_index]
+        annotator = self.annotator_entry.get().strip()
+
+        # If no annotator name has been specified, no editing column can be mapped
+        if not annotator:
+            return True
+
+        # Map username to its corresponding rating column fields
+        sanitized = sanitize_name(annotator)
+        label_col = f"{sanitized}_label"
+        multi_col = f"{sanitized}_multi_category"
+
+        # Read the current selection states from the UI widgets
+        current_label = self.label_var.get()
+        current_multi = self.multi_cat_var.get() if current_label == "Fake" else ("Real" if current_label == "Real" else "")
+
+        # Read the previously saved states from the in-memory record dict
+        saved_label = (record.get(label_col) or "").strip()
+        saved_multi = (record.get(multi_col) or "").strip()
+        if saved_label == "Real":
+            saved_multi = "Real"
+
+        # Check for discrepancies between the UI widgets and the cached memory record
+        changed = False
+        if current_label != saved_label:
+            changed = True
+        elif current_label == "Fake" and current_multi != saved_multi:
+            changed = True
+
+        # If no differences are found, it is safe to navigate away
+        if not changed:
+            return True
+
+        # Prompt the user with a standard confirmation dialog
+        response = messagebox.askyesnocancel(
+            "Unsaved Changes",
+            "You have unsaved changes in this record.\n\n"
+            "Do you want to save them before moving?"
+        )
+
+        # Handle user choice: True = Save, False = Discard, None = Cancel
+        if response is True:
+            # Attempt to write choices to memory and disk
+            save_ok = self._save_kappa_decision(auto_advance=False)
+            if not save_ok:
+                # If validation fails, ask the user if they wish to discard changes to proceed
+                discard = messagebox.askyesno(
+                    "Save Failed",
+                    "Could not save due to validation errors.\n\n"
+                    "Do you want to discard your changes and continue?"
+                )
+                return discard
+            return True
+        elif response is False:
+            # User explicitly chose to discard changes
+            return True
+        else:
+            # User clicked Cancel, aborting navigation
+            return False
+
+    def _kappa_next_record(self):
+        """
+        Navigates forward to the next record in the Kappa reliability review queue.
+        
+        Performs dirty verification checks on the active item before moving. If verification
+        passes and another record exists, increments the index counter and loads the new entry.
+        """
+        # Verify that we are not already at the final record in the list
+        if self.current_kappa_index < len(self.kappa_records) - 1:
+            # Run safety checks for unsaved changes before moving
+            if not self._check_unsaved_kappa_changes():
+                return
+            
+            # Increment index pointer and refresh UI field content
+            self.current_kappa_index += 1
+            self._display_kappa_record(self.current_kappa_index)
+
+    def _kappa_prev_record(self):
+        """
+        Navigates backward to the previous record in the Kappa reliability review queue.
+        
+        Performs dirty verification checks on the active item before moving. If verification
+        passes and another record exists, decrements the index counter and loads the new entry.
+        """
+        # Verify that we are not at the first record in the list
+        if self.current_kappa_index > 0:
+            # Run safety checks for unsaved changes before moving
+            if not self._check_unsaved_kappa_changes():
+                return
+            
+            # Decrement index pointer and refresh UI field content
+            self.current_kappa_index -= 1
+            self._display_kappa_record(self.current_kappa_index)
+
+    def _kappa_jump_to_record(self, event=None):
+        """
+        Jumps directly to a user-entered record index in the reliability review list.
+        
+        Triggered by pressing Enter on the index input widget. Validates that the input is a
+        valid integer within list boundaries, performs dirty checks, and displays the record.
+        """
+        try:
+            # Retrieve and parse the numeric value entered in the text field
+            val = int(self.record_index_entry.get().strip())
+            idx = val - 1
+            
+            # Validate that the index is within the boundaries of loaded kappa records
+            if 0 <= idx < len(self.kappa_records):
+                if self.current_kappa_index != idx:
+                    # Verify unsaved changes on the active record before leaping
+                    if not self._check_unsaved_kappa_changes():
+                        # Revert the index entry back to the active record number if cancelled
+                        self.record_index_entry.delete(0, "end")
+                        self.record_index_entry.insert(0, str(self.current_kappa_index + 1))
+                        self.focus_set()
+                        return
+                    
+                    # Update index and render the new record
+                    self.current_kappa_index = idx
+                    self._display_kappa_record(self.current_kappa_index)
+                
+                # Re-focus the main window
+                self.focus_set()
+            else:
+                # Revert text input and show a warning popup if the value is out of range
+                self.record_index_entry.delete(0, "end")
+                self.record_index_entry.insert(0, str(self.current_kappa_index + 1))
+                messagebox.showwarning("Invalid Record",
+                    f"Please enter a number between 1 and {len(self.kappa_records)}.")
+        except ValueError:
+            # Revert text input to the active record number if parsing fails
+            self.record_index_entry.delete(0, "end")
+            self.record_index_entry.insert(0, str(self.current_kappa_index + 1))
+
+# Launch the Tkinter application main loop when running this script directly
 if __name__ == "__main__":
+    # Instantiate the main application window object
     app = AnnotatorTool()
+    
+    # Run the main event handling loop to process user interactions and draw widgets
     app.mainloop()
