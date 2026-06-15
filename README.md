@@ -180,9 +180,9 @@ Keep the folder structure intact so the media paths in the CSV remain valid.
 
 ## Aggregating Data from Multiple Annotators
 
-Once multiple annotators have submitted their data, the project lead can easily combine all their work into one master dataset using the `aggregate_datasets.py` script.
+Once multiple annotators have submitted their data, the project lead can easily combine all their work into one master dataset directly within the application.
 
-1. Create a master folder (e.g., `all_annotators_dataset` inside the `annotator` directory).
+1. Create a master folder (e.g., `all_annotators_dataset` anywhere on your computer).
 2. Place each annotator's entire folder (containing their `dataset.csv`, `images/`, and `videos/` directories) inside this master folder.
    ```text
    all_annotators_dataset/
@@ -199,44 +199,46 @@ Once multiple annotators have submitted their data, the project lead can easily 
        ├── images/
        └── videos/
    ```
-3. Run the aggregation script from the terminal:
-   ```bash
-   python annotator/aggregate_datasets.py
-   ```
-4. The script will prompt you for the path to the master folder and the desired output locations (you can just press Enter to accept the defaults). It will automatically merge all CSV files into a single `dataset.csv` and safely copy all media into unified `images/` and `videos/` folders.
+3. Open the Annotator Tool.
+4. Click the **"Scripts"** button in the top right corner.
+5. Under the **"Aggregate Datasets"** column, the tool will prompt you to select the master folder you created in Step 1.
+6. It will automatically merge all CSV files into a single `dataset.csv` and safely copy all media into unified `images/` and `videos/` folders.
 
 ---
 
 ## Inter-Rater Reliability (Kappa Testing)
 
-To calculate agreement statistics (like Cohen's Kappa or Fleiss' Kappa) between multiple annotators, you can run a blind secondary rating workflow using a balanced sample subset.
+To calculate agreement statistics (like Cohen's Kappa or Fleiss' Kappa) between multiple annotators, you can run a blind secondary rating workflow using a balanced sample subset directly from the app.
 
 ### 1. Generate a Balanced Sample
 
-Use the `generate_kappa_sample.py` script to extract a balanced random sample of records from the master `dataset.csv`.
+You can extract a balanced random sample of records from your master `dataset.csv` right from the tool's scripts window.
 
-```bash
-python annotator/generate_kappa_sample.py
-```
-
-- **Interactive Mode**: Running the script will prompt you for the input CSV path, the number of items to sample (default `500`), and the output CSV path (default `relabeling_for_kappa.csv`).
-- **Command Line Arguments**: You can also run it with arguments:
-  ```bash
-  python annotator/generate_kappa_sample.py --n 60 --input annotator/dataset.csv --output annotator/relabeling_for_kappa.csv
-  ```
-- **Balancing Schema**: The script samples 50% Real and 50% Fake records (distributing Fake entries evenly across Misinformation, Satire, and Clickbait sub-categories).
+1. Click the **"Scripts"** button in the top right corner.
+2. Under the **"Generate Kappa Sample"** column, select your master `dataset.csv` file when prompted.
+3. Choose the number of items to sample (e.g., `500`).
+4. **Customize Distribution:** You can adjust the exact percentage of Real vs. Fake records. They will automatically auto-fill to equal 100%.
+5. **Customize Fake Sub-categories:** Adjust how the Fake percentage is divided internally (Misinformation, Satire, Clickbait). This uses a cascading auto-fill and must equal 100%.
+6. The app will generate a `relabeling_for_kappa.csv` file automatically with your custom distributions.
 
 ### 2. Blind Re-labeling
 
 Once `relabeling_for_kappa.csv` is generated:
 
 1. Distribute the `relabeling_for_kappa.csv` file along with the `images/` and `videos/` folders to the annotators.
-2. Annotators launch the tool and switch to **🔄 Re-label** mode via the top-left dropdown switcher.
+2. Annotators launch the tool and switch to **🔄 Re-label Mode** via the top-left dropdown switcher.
 3. Enter your **Annotator Name** (which must match the name used in your main annotations to correctly track columns).
 4. Browse the records (which display the news headline, text, and media in a read-only view). The actual labels previously assigned are hidden.
 5. Select a rating (**Fake** or **Real**) and classification type, then click **"💾 Save Decision"**.
 6. The tool will automatically save decisions to new dynamic columns in `relabeling_for_kappa.csv` named `{annotator_name}_label` and `{annotator_name}_multi_category`.
-7. Once all annotators have completed their reviews, merge their columns into a single master reliability file to compute inter-rater agreement.
+
+### 3. Calculate Kappa Score
+
+Once all annotators have completed their reviews on the same file:
+
+1. Click the **"Scripts"** button in the top right corner.
+2. Under the **"Calculate Kappa"** column, select the completed `relabeling_for_kappa.csv` file.
+3. The tool will automatically detect how many annotators participated and calculate the Inter-Rater Reliability metrics (Cohen's for 2, Fleiss' for 3+) for both Label and Multi-Category classifications.
 
 ---
 

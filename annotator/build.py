@@ -30,6 +30,7 @@ def build():
     
     # Use appropriate separator for --add-data
     sep = ";" if platform.system() == "Windows" else ":"
+    icon_ext = "icns" if platform.system() == "Darwin" else "ico"
 
     # Base PyInstaller command
     cmd = [
@@ -37,7 +38,9 @@ def build():
         "--name", "FakeNewsAnnotator",     # Name of the output executable
         "--windowed",                       # No console window (GUI app)
         mode,                               # --onedir for Mac, --onefile for Win/Linux
+        f"--icon=assets/app_icon.{icon_ext}", # App icon
         f"--add-data=version.json{sep}.",   # Include version.json in bundle
+        f"--add-data=assets{sep}assets",    # Include assets directory (icons, badges) in bundle
         "--noconfirm",                      # Overwrite previous build without asking
         "--clean",                          # Clean cache before building
         "annotator_tool.py",               # The main script to bundle
