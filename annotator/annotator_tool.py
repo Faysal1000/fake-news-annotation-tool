@@ -4393,6 +4393,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # Restore horizontal radio button layout orientation
         self._pack_radios_horizontal()
+        
+        # Ensure the reviewed badge is hidden when leaving Re-label mode
+        self.done_label.configure(image="", text="")
+        self.done_indicator_frame.pack_forget()
 
     def _restore_annotate_fields(self):
         """
