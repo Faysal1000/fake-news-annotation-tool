@@ -4682,12 +4682,13 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if self.reviewed_badge_img:
                 self.done_label.configure(image=self.reviewed_badge_img, text="")
             else:
-                self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+                self.done_label.configure(image="", text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+            # Show the indicator frame
+            self.done_indicator_frame.pack(side="bottom", expand=True, fill="both", padx=12, pady=(10, 20))
         else:
-            self.done_label.configure(image=None, text="")
-            
-        # Repack the indicator frame to refresh visual layout hierarchies
-        self.done_indicator_frame.pack(side="bottom", expand=True, fill="both", padx=12, pady=(10, 20))
+            self.done_label.configure(image="", text="")
+            # Hide the indicator frame completely if not reviewed
+            self.done_indicator_frame.pack_forget()
 
         # Recalculate kappa rating stats
         self._update_kappa_stats()
@@ -4769,7 +4770,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if self.reviewed_badge_img:
             self.done_label.configure(image=self.reviewed_badge_img, text="")
         else:
-            self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+            self.done_label.configure(image="", text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
 
         # Repack the indicator frame to refresh visuals
         if not auto_advance:
