@@ -890,7 +890,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.set_appearance_mode("dark")
         ctk.set_default_color_theme("blue")
 
-        self.title("📰 Fake News Dataset Annotator")
+        try:
+            version_file = SCRIPT_DIR / "version.json"
+            if version_file.exists():
+                with open(version_file, "r") as f:
+                    v_data = json.load(f)
+                    version_str = v_data.get("version", "")
+                self.title(f"📰 Fake News Dataset Annotator {version_str}".strip())
+            else:
+                self.title("📰 Fake News Dataset Annotator")
+        except Exception as e:
+            print(f"[WARNING] Failed to load version: {e}")
+            self.title("📰 Fake News Dataset Annotator")
         
         # Set application icon for window and taskbar
         try:
@@ -3226,17 +3237,46 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if not use_filtered or sub["Clickbait"] > 0:
             self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
         
-        # Render media files attachments total counts
-        self._create_stat_badge(self.stats_frame, "Images", img_count, "#1abc9c")
-        self._create_stat_badge(self.stats_frame, "Videos", vid_count, "#1abc9c")
+        # Create a "See More" badge-style button
+        see_more_badge = ctk.CTkFrame(
+            self.stats_frame, fg_color="#1e1e3a", corner_radius=8,
+            border_width=1, border_color="#333", cursor="hand2"
+        )
         
-        # Render article modality cards (modality distribution stats)
-        if not use_filtered or only_text > 0:
-            self._create_stat_badge(self.stats_frame, "Text Only", only_text, "#34495e")
-        if not use_filtered or both_text_image > 0:
-            self._create_stat_badge(self.stats_frame, "Text & Img", both_text_image, "#16a085")
-        if not use_filtered or only_image > 0:
-            self._create_stat_badge(self.stats_frame, "Img Only", only_image, "#2c3e50")
+        inner = ctk.CTkFrame(see_more_badge, fg_color="transparent")
+        inner.pack(padx=10, pady=6)
+        
+        dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5, fg_color="#3498db")
+        dot.pack(side="left", padx=(0, 6))
+        dot.pack_propagate(False)
+        
+        lbl = ctk.CTkLabel(
+            inner, text="See More ▸",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#3498db"
+        )
+        lbl.pack(side="left")
+        
+        # Add hover effects to the see more badge frame and its children
+        def on_enter(e):
+            see_more_badge.configure(fg_color="#2c2c54")
+        def on_leave(e):
+            see_more_badge.configure(fg_color="#1e1e3a")
+            
+        see_more_badge.bind("<Enter>", on_enter)
+        see_more_badge.bind("<Leave>", on_leave)
+        inner.bind("<Enter>", on_enter)
+        inner.bind("<Leave>", on_leave)
+        dot.bind("<Enter>", on_enter)
+        dot.bind("<Leave>", on_leave)
+        lbl.bind("<Enter>", on_enter)
+        lbl.bind("<Leave>", on_leave)
+        
+        # Bind click events
+        see_more_badge.bind("<Button-1>", lambda e: self._show_detailed_stats_popup())
+        inner.bind("<Button-1>", lambda e: self._show_detailed_stats_popup())
+        dot.bind("<Button-1>", lambda e: self._show_detailed_stats_popup())
+        lbl.bind("<Button-1>", lambda e: self._show_detailed_stats_popup())
 
         # Compile and layout the horizontal categories text bar
         if news_cats:
@@ -3262,6 +3302,261 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Call the FlowFrame layout manager arrange algorithm to calculate reflow positions
         self.stats_frame._arrange()
         self.category_stats_frame._arrange()
+
+    def _get_records_for_detailed_stats(self):
+        """
+        Retrieves the list of records to compute detailed statistics on.
+        If the app is in Review mode and filtering is active, it returns
+        self.dataset_records (the filtered subset). Otherwise, it reads all
+        records dynamically from dataset.csv.
+        """
+        use_filtered = (self.current_mode == "review" and self.advanced_filter
+                         and hasattr(self, 'dataset_records'))
+        if use_filtered:
+            return self.dataset_records
+        
+        records = []
+        if CSV_PATH.exists() and CSV_PATH.stat().st_size > 0:
+            try:
+                with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        records.append(row)
+            except Exception as e:
+                print(f"[WARNING] Failed to read CSV for detailed stats: {e}")
+        return records
+
+    def _show_detailed_stats_popup(self):
+        """
+        Displays a modal popup with a detailed grid breakdown of news modalities
+        (Video, Image, Text combinations) across all authenticity categories.
+        """
+        popup = ctk.CTkToplevel(self)
+        popup.title("Detailed Statistics Breakdown")
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        popup.resizable(True, True)
+
+        # Center the popup window on the screen relative to the main app coordinates
+        pw, ph = 880, 560
+        popup.geometry(f"{pw}x{ph}")
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (pw // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
+        popup.geometry(f"+{x}+{y}")
+
+
+        # Scrollable container supporting grid layout
+        scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 10))
+
+        # Retrieve records and compile stats
+        all_records = self._get_records_for_detailed_stats()
+        
+        def calculate_stats(records):
+            total_items = 0
+            total_images = 0
+            total_videos = 0
+            text_only = 0
+            image_only = 0
+            video_only = 0
+            text_image = 0
+            text_video = 0
+            image_video = 0
+            text_image_video = 0
+            other_empty = 0
+
+            for r in records:
+                total_items += 1
+                
+                # Image count
+                ip = (r.get("image_path") or "").strip()
+                img_list = [p for p in ip.split(";") if p.strip()]
+                total_images += len(img_list)
+                
+                # Video count
+                vp = (r.get("video_path") or "").strip()
+                has_video = bool(vp)
+                if has_video:
+                    total_videos += 1
+                    
+                has_text = bool((r.get("text") or "").strip())
+                has_image = bool(img_list)
+                
+                if has_text and not has_image and not has_video:
+                    text_only += 1
+                elif not has_text and has_image and not has_video:
+                    image_only += 1
+                elif not has_text and not has_image and has_video:
+                    video_only += 1
+                elif has_text and has_image and not has_video:
+                    text_image += 1
+                elif has_text and not has_image and has_video:
+                    text_video += 1
+                elif not has_text and has_image and has_video:
+                    image_video += 1
+                elif has_text and has_image and has_video:
+                    text_image_video += 1
+                else:
+                    other_empty += 1
+
+            return {
+                "Total Items": total_items,
+                "Total Images": total_images,
+                "Total Videos": total_videos,
+                "Text Only": text_only,
+                "Image Only": image_only,
+                "Video Only": video_only,
+                "Text + Image": text_image,
+                "Text + Video": text_video,
+                "Image + Video": image_video,
+                "Text + Image + Video": text_image_video,
+                "Other / Empty": other_empty
+            }
+
+        subsets = {
+            "Total": all_records,
+            "Real": [r for r in all_records if (r.get("label") or "").strip() == "Real"],
+            "Fake": [r for r in all_records if (r.get("label") or "").strip() == "Fake"],
+            "Misinfo": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+            "Satire": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+            "Clickbait": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+        }
+
+        stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
+
+        # Grid styling constants
+        header_fg = "#2e2e5c"
+        row_fg_even = "#1a1a36"
+        row_fg_odd = "#222244"
+        
+        # Grid frame setup
+        grid_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+        grid_frame.pack(fill="x", expand=True)
+        
+        # Configure columns
+        grid_frame.columnconfigure(0, weight=2, minsize=160)
+        for c in range(1, 7):
+            grid_frame.columnconfigure(c, weight=1, uniform="col_stat", minsize=90)
+            
+        # Draw Headers
+        headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
+        for col_idx, h_text in enumerate(headers):
+            cell_frame = ctk.CTkFrame(grid_frame, fg_color=header_fg, corner_radius=0, border_width=1, border_color="#3c3c6e")
+            cell_frame.grid(row=0, column=col_idx, sticky="nsew")
+            lbl = ctk.CTkLabel(cell_frame, text=h_text, font=ctk.CTkFont(size=12, weight="bold"), text_color="#ffffff")
+            lbl.pack(padx=6, pady=8, expand=True)
+
+        # Highlight tracking state
+        active_highlight_row = [None]  # List to allow mutation in nested scopes
+        row_cells = {}           # Maps row_idx -> list of cells
+        row_labels = {}          # Maps row_idx -> list of label widgets
+        row_default_colors = {}  # Maps row_idx -> default bg color
+        label_default_colors = {} # Maps label -> default text color
+
+        def on_row_click(row_idx):
+            # If the same row is already highlighted, toggle it off
+            if active_highlight_row[0] == row_idx:
+                for cell in row_cells[row_idx]:
+                    cell.configure(fg_color=row_default_colors[row_idx])
+                for label in row_labels[row_idx]:
+                    label.configure(text_color=label_default_colors[label])
+                active_highlight_row[0] = None
+            else:
+                # If a different row was highlighted, restore it first
+                if active_highlight_row[0] is not None:
+                    old_row = active_highlight_row[0]
+                    for cell in row_cells[old_row]:
+                        cell.configure(fg_color=row_default_colors[old_row])
+                    for label in row_labels[old_row]:
+                        label.configure(text_color=label_default_colors[label])
+                
+                # Highlight the newly clicked row
+                for cell in row_cells[row_idx]:
+                    cell.configure(fg_color="#1f6aa5")  # Eye-catchy active theme blue
+                for label in row_labels[row_idx]:
+                    # Make dark grey text (zeros) light steel-blue for high contrast readability when highlighted
+                    if label_default_colors[label] == "#666666":
+                        label.configure(text_color="#ccddee")
+                    else:
+                        label.configure(text_color="#ffffff")
+                active_highlight_row[0] = row_idx
+            
+        # Rows list with name and corresponding color indicator
+        metrics = [
+            ("Total Items", "#3498db"),
+            ("Total Images", "#1abc9c"),
+            ("Total Videos", "#1abc9c"),
+            ("Text Only", "#34495e"),
+            ("Image Only", "#2c3e50"),
+            ("Video Only", "#2c3e50"),
+            ("Text + Image", "#16a085"),
+            ("Text + Video", "#16a085"),
+            ("Image + Video", "#16a085"),
+            ("Text + Image + Video", "#16a085"),
+            ("Other / Empty", "#95a5a6")
+        ]
+        
+        for row_idx, (metric_name, dot_color) in enumerate(metrics, start=1):
+            bg_color = row_fg_even if row_idx % 2 == 0 else row_fg_odd
+            row_cells[row_idx] = []
+            row_labels[row_idx] = []
+            row_default_colors[row_idx] = bg_color
+            
+            # Row Header Cell
+            cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=0, border_width=1, border_color="#2e2e4f", cursor="hand2")
+            cell_frame.grid(row=row_idx, column=0, sticky="nsew")
+            row_cells[row_idx].append(cell_frame)
+            
+            inner = ctk.CTkFrame(cell_frame, fg_color="transparent")
+            inner.pack(padx=8, pady=6, anchor="w")
+            
+            dot = ctk.CTkFrame(inner, width=8, height=8, corner_radius=4, fg_color=dot_color)
+            dot.pack(side="left", padx=(0, 6))
+            dot.pack_propagate(False)
+            
+            lbl_weight = "bold" if row_idx == 1 else "normal"
+            lbl = ctk.CTkLabel(inner, text=metric_name,
+                               font=ctk.CTkFont(size=12, weight=lbl_weight),
+                               text_color="#ffffff")
+            lbl.pack(side="left")
+            row_labels[row_idx].append(lbl)
+            label_default_colors[lbl] = "#ffffff"
+
+            # Bind row click to header elements
+            cell_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+            inner.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+            dot.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+            lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+            
+            # Value Cells
+            for col_idx, col_key in enumerate(["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"], start=1):
+                val_cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=0, border_width=1, border_color="#2e2e4f", cursor="hand2")
+                val_cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew")
+                row_cells[row_idx].append(val_cell_frame)
+                
+                val = stats[col_key][metric_name]
+                text_color = "#ffffff" if val > 0 else "#666666"
+                weight = "bold" if val > 0 or row_idx == 1 else "normal"
+                
+                v_lbl = ctk.CTkLabel(val_cell_frame, text=str(val),
+                                   font=ctk.CTkFont(size=12, weight=weight),
+                                   text_color=text_color)
+                v_lbl.pack(padx=6, pady=6, expand=True)
+                row_labels[row_idx].append(v_lbl)
+                label_default_colors[v_lbl] = text_color
+
+                # Bind row click to value elements
+                val_cell_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                v_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+
+        # Close button
+        ctk.CTkButton(popup, text="Close", command=popup.destroy,
+                       height=36, font=ctk.CTkFont(size=13),
+                       fg_color="transparent", border_width=1,
+                       border_color="#555", width=120).pack(pady=(10, 16))
+
+    # REVIEW MODE
 
     # REVIEW MODE
 
