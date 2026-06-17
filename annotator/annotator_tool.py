@@ -97,8 +97,10 @@ else:
 # PyInstaller extracts these to sys._MEIPASS at runtime
 if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
     ASSETS_DIR = Path(sys._MEIPASS) / "assets"
+    VERSION_FILE = Path(sys._MEIPASS) / "version.json"
 else:
     ASSETS_DIR = SCRIPT_DIR / "assets"
+    VERSION_FILE = SCRIPT_DIR / "version.json"
 
 # Directory for storing saved image files
 IMAGES_DIR = SCRIPT_DIR / "images"
@@ -891,9 +893,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.set_default_color_theme("blue")
 
         try:
-            version_file = SCRIPT_DIR / "version.json"
-            if version_file.exists():
-                with open(version_file, "r") as f:
+            if VERSION_FILE.exists():
+                with open(VERSION_FILE, "r") as f:
                     v_data = json.load(f)
                     version_str = v_data.get("version", "")
                 self.title(f"📰 Fake News Dataset Annotator {version_str}".strip())
