@@ -3329,31 +3329,40 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
     def _show_detailed_stats_popup(self):
         """
-        Displays a modal popup with a detailed grid breakdown of news modalities
+        Displays a modal popup with a detailed dashboard breakdown of news modalities
         (Video, Image, Text combinations) across all authenticity categories.
         """
         popup = ctk.CTkToplevel(self)
-        popup.title("Detailed Statistics Breakdown")
-        popup.configure(fg_color="#1a1a2e")
+        popup.title("Detailed Statistics Dashboard")
+        popup.configure(fg_color="#11111b")  # Darker premium background
         popup.attributes("-topmost", True)
         popup.resizable(True, True)
 
-        # Center the popup window on the screen relative to the main app coordinates
-        pw, ph = 880, 560
+        pw, ph = 960, 680
         popup.geometry(f"{pw}x{ph}")
         popup.update_idletasks()
         x = self.winfo_x() + (self.winfo_width() // 2) - (pw // 2)
         y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
         popup.geometry(f"+{x}+{y}")
 
+        # Top Controls Frame
+        top_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        top_frame.pack(fill="x", padx=24, pady=(24, 10))
+        
+        ctk.CTkLabel(top_frame, text="Filter by News Category:", font=ctk.CTkFont(size=14, weight="bold"), text_color="#cdd6f4").pack(side="left", padx=(0, 10))
+        
+        category_options = ["All Categories"] + [c for c in CATEGORIES if c]
+        category_var = ctk.StringVar(value="All Categories")
+        
+        # Container for the dashboard (Cards + Grid)
+        dash_container = ctk.CTkFrame(popup, fg_color="transparent")
+        dash_container.pack(fill="both", expand=True)
 
-        # Scrollable container supporting grid layout
-        scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")
-        scroll.pack(fill="both", expand=True, padx=16, pady=(0, 10))
-
-        # Retrieve records and compile stats
         all_records = self._get_records_for_detailed_stats()
         
+        # Active subset data for CSV export
+        active_export_data = []
+
         def calculate_stats(records):
             total_items = 0
             total_images = 0
@@ -3365,17 +3374,13 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             text_video = 0
             image_video = 0
             text_image_video = 0
-            other_empty = 0
 
             for r in records:
                 total_items += 1
-                
-                # Image count
                 ip = (r.get("image_path") or "").strip()
                 img_list = [p for p in ip.split(";") if p.strip()]
                 total_images += len(img_list)
                 
-                # Video count
                 vp = (r.get("video_path") or "").strip()
                 has_video = bool(vp)
                 if has_video:
@@ -3398,8 +3403,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     image_video += 1
                 elif has_text and has_image and has_video:
                     text_image_video += 1
-                else:
-                    other_empty += 1
 
             return {
                 "Total Items": total_items,
@@ -3411,156 +3414,306 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 "Text + Image": text_image,
                 "Text + Video": text_video,
                 "Image + Video": image_video,
-                "Text + Image + Video": text_image_video,
-                "Other / Empty": other_empty
+                "Text + Image + Video": text_image_video
             }
 
-        subsets = {
-            "Total": all_records,
-            "Real": [r for r in all_records if (r.get("label") or "").strip() == "Real"],
-            "Fake": [r for r in all_records if (r.get("label") or "").strip() == "Fake"],
-            "Misinfo": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
-            "Satire": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
-            "Clickbait": [r for r in all_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
-        }
+        def draw_dashboard(selected_category):
+            nonlocal active_export_data
+            for widget in dash_container.winfo_children():
+                widget.destroy()
 
-        stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
-
-        # Grid styling constants
-        header_fg = "#181825"
-        row_fg_even = "#1e1e2e"
-        row_fg_odd = "#242436"
-        hover_fg = "#313244"
-        active_fg = "#4f46e5" # Vibrant indigo
-        
-        # Grid frame setup
-        grid_frame = ctk.CTkFrame(scroll, fg_color="transparent")
-        grid_frame.pack(fill="x", expand=True)
-        
-        # Configure columns
-        grid_frame.columnconfigure(0, weight=2, minsize=160)
-        for c in range(1, 7):
-            grid_frame.columnconfigure(c, weight=1, uniform="col_stat", minsize=90)
-            
-        # Draw Headers
-        headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
-        for col_idx, h_text in enumerate(headers):
-            cell_frame = ctk.CTkFrame(grid_frame, fg_color=header_fg, corner_radius=0, border_width=0)
-            cell_frame.grid(row=0, column=col_idx, sticky="nsew", pady=(0, 2))
-            lbl = ctk.CTkLabel(cell_frame, text=h_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#cdd6f4")
-            lbl.pack(padx=6, pady=10, expand=True)
-
-        # Highlight tracking state
-        active_highlight_row = [None]
-        row_cells = {}
-        row_labels = {}
-        row_default_colors = {}
-        label_default_colors = {}
-
-        def on_enter(e, r):
-            if active_highlight_row[0] != r:
-                for cell in row_cells[r]:
-                    cell.configure(fg_color=hover_fg)
-
-        def on_leave(e, r):
-            if active_highlight_row[0] != r:
-                for cell in row_cells[r]:
-                    cell.configure(fg_color=row_default_colors[r])
-
-        def on_row_click(row_idx):
-            if active_highlight_row[0] == row_idx:
-                for cell in row_cells[row_idx]:
-                    cell.configure(fg_color=hover_fg) # Leaves it in hover state
-                for label in row_labels[row_idx]:
-                    label.configure(text_color=label_default_colors[label])
-                active_highlight_row[0] = None
+            # Filter records
+            if selected_category == "All Categories":
+                filtered_records = all_records
             else:
-                if active_highlight_row[0] is not None:
-                    old_row = active_highlight_row[0]
-                    for cell in row_cells[old_row]:
-                        cell.configure(fg_color=row_default_colors[old_row])
-                    for label in row_labels[old_row]:
+                filtered_records = [r for r in all_records if (r.get("category") or "").strip() == selected_category]
+
+            # --- EMPTY STATE ---
+            if not filtered_records:
+                empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
+                empty_frame.pack(expand=True)
+                ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
+                ctk.CTkLabel(empty_frame, text="No Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
+                ctk.CTkLabel(empty_frame, text=f"There are currently 0 annotated items in the '{selected_category}' category.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                active_export_data = []
+                return
+
+            subsets = {
+                "Total": filtered_records,
+                "Real": [r for r in filtered_records if (r.get("label") or "").strip() == "Real"],
+                "Fake": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake"],
+                "Misinfo": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+                "Satire": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+                "Clickbait": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+            }
+
+            stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
+
+            # --- SUMMARY CARDS ---
+            cards_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
+            cards_frame.pack(fill="x", padx=24, pady=(10, 20))
+            cards_frame.grid_columnconfigure((0, 1, 2), weight=1, uniform="card")
+
+            def create_card(parent, title, value, subtext, col, bg_color):
+                c = ctk.CTkFrame(parent, fg_color=bg_color, corner_radius=12)
+                c.grid(row=0, column=col, sticky="nsew", padx=8)
+                ctk.CTkLabel(c, text=title, font=ctk.CTkFont(size=13, weight="bold"), text_color="#bac2de").pack(anchor="w", padx=16, pady=(16, 0))
+                ctk.CTkLabel(c, text=str(value), font=ctk.CTkFont(size=32, weight="bold"), text_color="#ffffff").pack(anchor="w", padx=16, pady=(0, 0))
+                ctk.CTkLabel(c, text=subtext, font=ctk.CTkFont(size=12), text_color="#a6adc8").pack(anchor="w", padx=16, pady=(0, 16))
+
+            total_count = stats["Total"]["Total Items"]
+            real_count = stats["Real"]["Total Items"]
+            fake_count = stats["Fake"]["Total Items"]
+            real_pct = int(real_count / total_count * 100) if total_count > 0 else 0
+            fake_pct = int(fake_count / total_count * 100) if total_count > 0 else 0
+            
+            total_media = stats["Total"]["Total Images"] + stats["Total"]["Total Videos"]
+
+            create_card(cards_frame, "Total Items", total_count, "Annotated entries", 0, "#1e1e2e")
+            create_card(cards_frame, "Authenticity Split", f"{real_pct}% / {fake_pct}%", f"{real_count} Real, {fake_count} Fake", 1, "#1e1e2e")
+            create_card(cards_frame, "Total Media", total_media, f"{stats['Total']['Total Images']} Images, {stats['Total']['Total Videos']} Videos", 2, "#1e1e2e")
+
+            # --- DETAILED GRID ---
+            scroll = ctk.CTkScrollableFrame(dash_container, fg_color="#181825", corner_radius=16)
+            scroll.pack(fill="both", expand=True, padx=24, pady=(0, 10))
+
+            header_fg = "#181825"
+            row_fg_even = "#1e1e2e"
+            row_fg_odd = "#242436"
+            hover_fg = "#313244"
+            active_fg = "#4f46e5" 
+            
+            grid_frame = ctk.CTkFrame(scroll, fg_color="transparent")
+            grid_frame.pack(fill="x", expand=True, padx=2, pady=2)
+            
+            grid_frame.columnconfigure(0, weight=2, minsize=180)
+            for c in range(1, 7):
+                grid_frame.columnconfigure(c, weight=1, uniform="col_stat", minsize=100)
+                
+            headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
+            for col_idx, h_text in enumerate(headers):
+                cell_frame = ctk.CTkFrame(grid_frame, fg_color=header_fg, corner_radius=0, border_width=0)
+                cell_frame.grid(row=0, column=col_idx, sticky="nsew", pady=(0, 4))
+                lbl = ctk.CTkLabel(cell_frame, text=h_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#cdd6f4")
+                lbl.pack(padx=6, pady=12, expand=True)
+
+            active_highlight_row = [None]
+            row_cells = {}
+            row_labels = {}
+            row_default_colors = {}
+            label_default_colors = {}
+
+            def on_enter(e, r):
+                if active_highlight_row[0] != r:
+                    for cell in row_cells[r]:
+                        cell.configure(fg_color=hover_fg)
+
+            def on_leave(e, r):
+                if active_highlight_row[0] != r:
+                    for cell in row_cells[r]:
+                        cell.configure(fg_color=row_default_colors[r])
+
+            def on_row_click(row_idx):
+                if active_highlight_row[0] == row_idx:
+                    for cell in row_cells[row_idx]:
+                        cell.configure(fg_color=hover_fg) 
+                    for label in row_labels[row_idx]:
                         label.configure(text_color=label_default_colors[label])
+                    active_highlight_row[0] = None
+                else:
+                    if active_highlight_row[0] is not None:
+                        old_row = active_highlight_row[0]
+                        for cell in row_cells[old_row]:
+                            cell.configure(fg_color=row_default_colors[old_row])
+                        for label in row_labels[old_row]:
+                            label.configure(text_color=label_default_colors[label])
+                    
+                    for cell in row_cells[row_idx]:
+                        cell.configure(fg_color=active_fg)
+                    for label in row_labels[row_idx]:
+                        if label_default_colors[label] == "#6c7086":
+                            label.configure(text_color="#bac2de") 
+                        else:
+                            label.configure(text_color="#ffffff")
+                    active_highlight_row[0] = row_idx
                 
-                for cell in row_cells[row_idx]:
-                    cell.configure(fg_color=active_fg)
-                for label in row_labels[row_idx]:
-                    if label_default_colors[label] == "#6c7086":
-                        label.configure(text_color="#bac2de") # High contrast for zeros
-                    else:
-                        label.configure(text_color="#ffffff")
-                active_highlight_row[0] = row_idx
+            metrics = [
+                ("Total Items", "#89b4fa"),
+                ("Total Images", "#a6e3a1"),
+                ("Total Videos", "#a6e3a1"),
+                ("Text Only", "#f38ba8"),
+                ("Image Only", "#fab387"),
+                ("Video Only", "#fab387"),
+                ("Text + Image", "#f9e2af"),
+                ("Text + Video", "#f9e2af"),
+                ("Image + Video", "#f9e2af"),
+                ("Text + Image + Video", "#cba6f7")
+            ]
             
-        metrics = [
-            ("Total Items", "#89b4fa"),
-            ("Total Images", "#a6e3a1"),
-            ("Total Videos", "#a6e3a1"),
-            ("Text Only", "#f38ba8"),
-            ("Image Only", "#fab387"),
-            ("Video Only", "#fab387"),
-            ("Text + Image", "#f9e2af"),
-            ("Text + Video", "#f9e2af"),
-            ("Image + Video", "#f9e2af"),
-            ("Text + Image + Video", "#cba6f7")
-        ]
-        
-        for row_idx, (metric_name, dot_color) in enumerate(metrics, start=1):
-            bg_color = row_fg_even if row_idx % 2 == 0 else row_fg_odd
-            row_cells[row_idx] = []
-            row_labels[row_idx] = []
-            row_default_colors[row_idx] = bg_color
-            
-            # Row Header Cell
-            cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=0, border_width=0, cursor="hand2")
-            cell_frame.grid(row=row_idx, column=0, sticky="nsew")
-            row_cells[row_idx].append(cell_frame)
-            
-            inner = ctk.CTkFrame(cell_frame, fg_color="transparent")
-            inner.pack(padx=12, pady=10, anchor="w")
-            
-            dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5, fg_color=dot_color)
-            dot.pack(side="left", padx=(0, 10))
-            dot.pack_propagate(False)
-            
-            lbl_weight = "bold" if row_idx == 1 else "normal"
-            lbl = ctk.CTkLabel(inner, text=metric_name, font=ctk.CTkFont(size=13, weight=lbl_weight), text_color="#f5e0dc")
-            lbl.pack(side="left")
-            row_labels[row_idx].append(lbl)
-            label_default_colors[lbl] = "#f5e0dc"
+            export_rows = [headers]
 
-            # Event bindings
-            for widget in (cell_frame, inner, dot, lbl):
-                widget.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
-                widget.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
-                widget.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-            
-            # Value Cells
-            for col_idx, col_key in enumerate(["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"], start=1):
-                val_cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=0, border_width=0, cursor="hand2")
-                val_cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew")
-                row_cells[row_idx].append(val_cell_frame)
+            for row_idx, (metric_name, dot_color) in enumerate(metrics, start=1):
+                bg_color = row_fg_even if row_idx % 2 == 0 else row_fg_odd
+                row_cells[row_idx] = []
+                row_labels[row_idx] = []
+                row_default_colors[row_idx] = bg_color
                 
-                val = stats[col_key][metric_name]
-                text_color = "#f5e0dc" if val > 0 else "#6c7086"
-                weight = "bold" if val > 0 or row_idx == 1 else "normal"
+                cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6 if col_idx == 0 else 0, border_width=0, cursor="hand2")
+                cell_frame.grid(row=row_idx, column=0, sticky="nsew", padx=(0, 2), pady=1)
+                row_cells[row_idx].append(cell_frame)
                 
-                v_lbl = ctk.CTkLabel(val_cell_frame, text=str(val), font=ctk.CTkFont(size=13, weight=weight), text_color=text_color)
-                v_lbl.pack(padx=8, pady=10, expand=True)
-                row_labels[row_idx].append(v_lbl)
-                label_default_colors[v_lbl] = text_color
+                inner = ctk.CTkFrame(cell_frame, fg_color="transparent")
+                inner.pack(padx=16, pady=12, anchor="w")
+                
+                dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5, fg_color=dot_color)
+                dot.pack(side="left", padx=(0, 10))
+                dot.pack_propagate(False)
+                
+                lbl_weight = "bold" if row_idx == 1 else "normal"
+                lbl = ctk.CTkLabel(inner, text=metric_name, font=ctk.CTkFont(size=14, weight=lbl_weight), text_color="#f5e0dc")
+                lbl.pack(side="left")
+                row_labels[row_idx].append(lbl)
+                label_default_colors[lbl] = "#f5e0dc"
 
-                val_cell_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
-                val_cell_frame.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
-                val_cell_frame.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-                v_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
-                v_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
-                v_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                for widget in (cell_frame, inner, dot, lbl):
+                    widget.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    widget.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
+                    widget.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                
+                csv_row = [metric_name]
 
-        # Close button
-        ctk.CTkButton(popup, text="Close", command=popup.destroy,
-                       height=36, font=ctk.CTkFont(size=13),
+                for col_idx, col_key in enumerate(["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"], start=1):
+                    is_last_col = (col_idx == 6)
+                    val_cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6 if is_last_col else 0, border_width=0, cursor="hand2")
+                    val_cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew", padx=(0, 0 if is_last_col else 2), pady=1)
+                    row_cells[row_idx].append(val_cell_frame)
+                    
+                    val = stats[col_key][metric_name]
+                    total_for_col = stats[col_key]["Total Items"]
+                    
+                    # Smart Percentages: only for Modality rows (not Total Items/Images/Videos)
+                    csv_row.append(str(val))
+
+                    text_color = "#f5e0dc" if val > 0 else "#6c7086"
+                    weight = "bold" if val > 0 or row_idx == 1 else "normal"
+                    
+                    inner_val_frame = ctk.CTkFrame(val_cell_frame, fg_color="transparent")
+                    inner_val_frame.pack(expand=True, pady=12)
+                    
+                    v_lbl = ctk.CTkLabel(inner_val_frame, text=str(val), font=ctk.CTkFont(size=14, weight=weight), text_color=text_color)
+                    v_lbl.pack(side="left")
+                    row_labels[row_idx].append(v_lbl)
+                    label_default_colors[v_lbl] = text_color
+                    
+                    pct_lbl = None
+                    if row_idx > 3 and val > 0 and total_for_col > 0:
+                        pct = int((val / total_for_col) * 100)
+                        pct_color = "#9399b2" # Subtle gray for percentage
+                        pct_lbl = ctk.CTkLabel(inner_val_frame, text=f"({pct}%)", font=ctk.CTkFont(size=12, weight="bold"), text_color=pct_color)
+                        pct_lbl.pack(side="left", padx=(6, 0))
+                        row_labels[row_idx].append(pct_lbl)
+                        label_default_colors[pct_lbl] = pct_color
+
+                    val_cell_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    val_cell_frame.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
+                    val_cell_frame.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                    inner_val_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    inner_val_frame.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
+                    inner_val_frame.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                    v_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    v_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
+                    v_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                    if pct_lbl:
+                        pct_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                        pct_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
+                        pct_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
+                
+                export_rows.append(csv_row)
+            
+            active_export_data = export_rows
+
+        def on_category_change(choice):
+            draw_dashboard(choice)
+
+        ctk.CTkOptionMenu(top_frame, values=category_options, variable=category_var, command=on_category_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
+
+        def export_csv():
+            if not all_records:
+                messagebox.showinfo("Export", "No data to export.", parent=popup)
+                return
+            
+            filepath = filedialog.asksaveasfilename(
+                parent=popup,
+                defaultextension=".csv",
+                initialfile="detailed_statistics_all.csv",
+                title="Save Detailed Statistics as CSV",
+                filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
+            )
+            if filepath:
+                try:
+                    with open(filepath, "w", newline="", encoding="utf-8") as f:
+                        writer = csv.writer(f)
+                        
+                        categories_to_export = ["All Categories"] + [c for c in CATEGORIES if c]
+                        headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
+                        
+                        for cat in categories_to_export:
+                            # Filter records
+                            if cat == "All Categories":
+                                f_records = all_records
+                            else:
+                                f_records = [r for r in all_records if (r.get("category") or "").strip() == cat]
+                                
+                            if not f_records:
+                                continue # Skip empty categories
+                                
+                            subsets = {
+                                "Total": f_records,
+                                "Real": [r for r in f_records if (r.get("label") or "").strip() == "Real"],
+                                "Fake": [r for r in f_records if (r.get("label") or "").strip() == "Fake"],
+                                "Misinfo": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+                                "Satire": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+                                "Clickbait": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+                            }
+                            
+                            c_stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
+                            
+                            writer.writerow([f"=== CATEGORY: {cat.upper()} ==="])
+                            writer.writerow(headers)
+                            
+                            metrics_list = [
+                                "Total Items", "Total Images", "Total Videos",
+                                "Text Only", "Image Only", "Video Only",
+                                "Text + Image", "Text + Video", "Image + Video", "Text + Image + Video"
+                            ]
+                            
+                            for metric_name in metrics_list:
+                                row_data = [metric_name]
+                                for col_key in ["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]:
+                                    val = c_stats[col_key][metric_name]
+                                    row_data.append(str(val))
+                                writer.writerow(row_data)
+                            writer.writerow([]) # Blank row for separation
+                            
+                    messagebox.showinfo("Success", f"Statistics successfully exported to:\n{filepath}", parent=popup)
+                except Exception as e:
+                    messagebox.showerror("Export Failed", f"An error occurred while saving:\n{e}", parent=popup)
+
+        # Bottom Frame
+        bottom_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        bottom_frame.pack(fill="x", padx=24, pady=(0, 24))
+
+        ctk.CTkButton(bottom_frame, text="Close", command=popup.destroy,
+                       height=40, font=ctk.CTkFont(size=14, weight="bold"),
                        fg_color="transparent", border_width=1,
-                       border_color="#555", width=120).pack(pady=(10, 16))
+                       border_color="#555", width=120).pack(side="right", padx=(10, 0))
+                       
+        ctk.CTkButton(bottom_frame, text="📥 Export to CSV", command=export_csv,
+                       height=40, font=ctk.CTkFont(size=14, weight="bold"),
+                       fg_color="#313244", hover_color="#45475a", width=140).pack(side="right")
+
+        # Initial draw
+        draw_dashboard("All Categories")
 
     # REVIEW MODE
 
