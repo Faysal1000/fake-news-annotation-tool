@@ -144,6 +144,9 @@ CATEGORIES = ["", "Politics", "Health", "Science", "Technology", "Sports",
 # Classifications for news labeled as Fake
 MULTI_CATEGORIES = ["Misinformation", "Satire", "Clickbait"]
 
+# Minimum character length for heading or text combined to be considered as a 'Text' modality
+MIN_TEXT_LENGTH = 30
+
 # Medium category dropdown options to specify where the news was found
 SOURCE_CATEGORIES = ["", "News Channel", "Newspaper", "Facebook", "Tiktok",
                      "Twitter", "Instagram", "Reddit", "YouTube",
@@ -3349,10 +3352,27 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         top_frame = ctk.CTkFrame(popup, fg_color="transparent")
         top_frame.pack(fill="x", padx=24, pady=(24, 10))
         
-        ctk.CTkLabel(top_frame, text="Filter by News Category:", font=ctk.CTkFont(size=14, weight="bold"), text_color="#cdd6f4").pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(top_frame, text="Filter:", font=ctk.CTkFont(size=14, weight="bold"), text_color="#cdd6f4").pack(side="left", padx=(0, 10))
         
         category_options = ["All Categories"] + [c for c in CATEGORIES if c]
         category_var = ctk.StringVar(value="All Categories")
+        
+        annotators = sorted(list(set(r.get("annotator", "").strip() for r in self._get_records_for_detailed_stats() if r.get("annotator", "").strip())))
+        annotator_options = ["All Annotators"] + annotators
+        annotator_var = ctk.StringVar(value="All Annotators")
+        
+        def show_info():
+            info_text = (
+                "Dashboard Calculation Metrics:\n\n"
+                "1. Hidden by Default: Percentages only appear when you click a row or column header.\n\n"
+                "2. Column Clicks (Vertical %): Shows the distribution of modalities for that specific column.\n\n"
+                "3. Row Clicks (Horizontal %): 'Real' & 'Fake' are percentages of the 'Total' column. 'Misinfo', 'Satire', & 'Clickbait' are percentages of the 'Fake' column.\n\n"
+                "4. Raw Counts: The 'Total Items' row and 'Total' column always show raw instance counts."
+            )
+            messagebox.showinfo("Metrics Info", info_text, parent=popup)
+
+        info_btn = ctk.CTkButton(top_frame, text="❓", width=28, height=28, fg_color="transparent", hover_color="#313244", font=ctk.CTkFont(size=14), command=show_info)
+        info_btn.pack(side="right", padx=(10, 0))
         
         # Container for the dashboard (Cards + Grid)
         dash_container = ctk.CTkFrame(popup, fg_color="transparent")
@@ -3386,7 +3406,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 if has_video:
                     total_videos += 1
                     
-                has_text = bool((r.get("text") or "").strip())
+                t_content = (r.get("text") or "").strip()
+                h_content = (r.get("heading") or "").strip()
+                has_text = (len(t_content) + len(h_content)) >= MIN_TEXT_LENGTH
+                
                 has_image = bool(img_list)
                 
                 if has_text and not has_image and not has_video:
@@ -3417,16 +3440,20 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 "Text + Image + Video": text_image_video
             }
 
-        def draw_dashboard(selected_category):
+        def draw_dashboard(*args):
+            selected_category = category_var.get()
+            selected_annotator = annotator_var.get()
+            
             nonlocal active_export_data
             for widget in dash_container.winfo_children():
                 widget.destroy()
 
             # Filter records
-            if selected_category == "All Categories":
-                filtered_records = all_records
-            else:
-                filtered_records = [r for r in all_records if (r.get("category") or "").strip() == selected_category]
+            filtered_records = all_records
+            if selected_category != "All Categories":
+                filtered_records = [r for r in filtered_records if (r.get("category") or "").strip() == selected_category]
+            if selected_annotator != "All Annotators":
+                filtered_records = [r for r in filtered_records if (r.get("annotator") or "").strip() == selected_annotator]
 
             # --- EMPTY STATE ---
             if not filtered_records:
@@ -3434,7 +3461,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 empty_frame.pack(expand=True)
                 ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
                 ctk.CTkLabel(empty_frame, text="No Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
-                ctk.CTkLabel(empty_frame, text=f"There are currently 0 annotated items in the '{selected_category}' category.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                ctk.CTkLabel(empty_frame, text=f"No annotated items match the current filters.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
                 active_export_data = []
                 return
 
@@ -3457,9 +3484,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             def create_card(parent, title, value, subtext, col, bg_color):
                 c = ctk.CTkFrame(parent, fg_color=bg_color, corner_radius=12)
                 c.grid(row=0, column=col, sticky="nsew", padx=8)
-                ctk.CTkLabel(c, text=title, font=ctk.CTkFont(size=13, weight="bold"), text_color="#bac2de").pack(anchor="w", padx=16, pady=(16, 0))
-                ctk.CTkLabel(c, text=str(value), font=ctk.CTkFont(size=32, weight="bold"), text_color="#ffffff").pack(anchor="w", padx=16, pady=(0, 0))
-                ctk.CTkLabel(c, text=subtext, font=ctk.CTkFont(size=12), text_color="#a6adc8").pack(anchor="w", padx=16, pady=(0, 16))
+                ctk.CTkLabel(c, text=title, font=ctk.CTkFont(size=13, weight="bold"), text_color="#bac2de").pack(anchor="w", padx=16, pady=(10, 0))
+                ctk.CTkLabel(c, text=str(value), font=ctk.CTkFont(size=28, weight="bold"), text_color="#ffffff").pack(anchor="w", padx=16, pady=(0, 0))
+                ctk.CTkLabel(c, text=subtext, font=ctk.CTkFont(size=12), text_color="#a6adc8").pack(anchor="w", padx=16, pady=(0, 10))
 
             total_count = stats["Total"]["Total Items"]
             real_count = stats["Real"]["Total Items"]
@@ -3491,56 +3518,99 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 grid_frame.columnconfigure(c, weight=1, uniform="col_stat", minsize=100)
                 
             headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
-            for col_idx, h_text in enumerate(headers):
-                cell_frame = ctk.CTkFrame(grid_frame, fg_color=header_fg, corner_radius=0, border_width=0)
-                cell_frame.grid(row=0, column=col_idx, sticky="nsew", pady=(0, 4))
-                lbl = ctk.CTkLabel(cell_frame, text=h_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#cdd6f4")
-                lbl.pack(padx=6, pady=12, expand=True)
-
+            
             active_highlight_row = [None]
+            active_highlight_col = [None]
             row_cells = {}
             row_labels = {}
+            col_cells = {i: [] for i in range(7)}
+            col_labels = {i: [] for i in range(7)}
             row_default_colors = {}
             label_default_colors = {}
 
+            def clear_highlights():
+                if active_highlight_row[0] is not None:
+                    old_row = active_highlight_row[0]
+                    for cell in row_cells[old_row]:
+                        cell.configure(fg_color=row_default_colors[old_row])
+                    for label in row_labels[old_row]:
+                        if label_default_colors[label] == "HIDDEN_PCT":
+                            label.configure(text="", text_color="#9399b2")
+                        else:
+                            label.configure(text_color=label_default_colors[label])
+                    active_highlight_row[0] = None
+                
+                if active_highlight_col[0] is not None:
+                    old_col = active_highlight_col[0]
+                    for r_idx, cell in col_cells[old_col]:
+                        cell.configure(fg_color=row_default_colors[r_idx])
+                    for label in col_labels[old_col]:
+                        if label_default_colors[label] == "HIDDEN_PCT":
+                            label.configure(text="", text_color="#9399b2")
+                        else:
+                            label.configure(text_color=label_default_colors[label])
+                    active_highlight_col[0] = None
+
+            for col_idx, h_text in enumerate(headers):
+                cell_frame = ctk.CTkFrame(grid_frame, fg_color=header_fg, corner_radius=0, border_width=0, cursor="hand2")
+                cell_frame.grid(row=0, column=col_idx, sticky="nsew", pady=(0, 4))
+                lbl = ctk.CTkLabel(cell_frame, text=h_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#cdd6f4")
+                lbl.pack(padx=6, pady=12, expand=True)
+                
+                # Bind column click
+                cell_frame.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
+                lbl.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
+
             def on_enter(e, r):
-                if active_highlight_row[0] != r:
+                if active_highlight_row[0] != r and active_highlight_col[0] is None:
                     for cell in row_cells[r]:
                         cell.configure(fg_color=hover_fg)
 
             def on_leave(e, r):
-                if active_highlight_row[0] != r:
+                if active_highlight_row[0] != r and active_highlight_col[0] is None:
                     for cell in row_cells[r]:
                         cell.configure(fg_color=row_default_colors[r])
 
             def on_row_click(row_idx):
                 if active_highlight_row[0] == row_idx:
+                    clear_highlights()
                     for cell in row_cells[row_idx]:
-                        cell.configure(fg_color=hover_fg) 
-                    for label in row_labels[row_idx]:
-                        label.configure(text_color=label_default_colors[label])
-                    active_highlight_row[0] = None
+                        cell.configure(fg_color=hover_fg)
                 else:
-                    if active_highlight_row[0] is not None:
-                        old_row = active_highlight_row[0]
-                        for cell in row_cells[old_row]:
-                            cell.configure(fg_color=row_default_colors[old_row])
-                        for label in row_labels[old_row]:
-                            label.configure(text_color=label_default_colors[label])
-                    
+                    clear_highlights()
                     for cell in row_cells[row_idx]:
                         cell.configure(fg_color=active_fg)
                     for label in row_labels[row_idx]:
-                        if label_default_colors[label] == "#6c7086":
+                        if label_default_colors[label] == "HIDDEN_PCT":
+                            h_text = getattr(label, '_stored_horizontal_text', '')
+                            h_color = getattr(label, '_horizontal_highlight_color', '#bac2de')
+                            label.configure(text=h_text, text_color=h_color)
+                        elif label_default_colors[label] in ("#6c7086", "#9399b2"):
                             label.configure(text_color="#bac2de") 
                         else:
                             label.configure(text_color="#ffffff")
                     active_highlight_row[0] = row_idx
+                    
+            def on_col_click(col_idx):
+                if active_highlight_col[0] == col_idx:
+                    clear_highlights()
+                else:
+                    clear_highlights()
+                    for r_idx, cell in col_cells[col_idx]:
+                        cell.configure(fg_color=active_fg)
+                    for label in col_labels[col_idx]:
+                        if label_default_colors[label] == "HIDDEN_PCT":
+                            v_text = getattr(label, '_stored_vertical_text', '')
+                            v_color = getattr(label, '_vertical_highlight_color', '#bac2de')
+                            label.configure(text=v_text, text_color=v_color)
+                        elif label_default_colors[label] in ("#6c7086", "#9399b2"):
+                            label.configure(text_color="#bac2de") 
+                        else:
+                            label.configure(text_color="#ffffff")
+                    active_highlight_col[0] = col_idx
                 
             metrics = [
                 ("Total Items", "#89b4fa"),
-                ("Total Images", "#a6e3a1"),
-                ("Total Videos", "#a6e3a1"),
                 ("Text Only", "#f38ba8"),
                 ("Image Only", "#fab387"),
                 ("Video Only", "#fab387"),
@@ -3561,6 +3631,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6 if col_idx == 0 else 0, border_width=0, cursor="hand2")
                 cell_frame.grid(row=row_idx, column=0, sticky="nsew", padx=(0, 2), pady=1)
                 row_cells[row_idx].append(cell_frame)
+                col_cells[0].append((row_idx, cell_frame))
                 
                 inner = ctk.CTkFrame(cell_frame, fg_color="transparent")
                 inner.pack(padx=16, pady=12, anchor="w")
@@ -3573,6 +3644,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 lbl = ctk.CTkLabel(inner, text=metric_name, font=ctk.CTkFont(size=14, weight=lbl_weight), text_color="#f5e0dc")
                 lbl.pack(side="left")
                 row_labels[row_idx].append(lbl)
+                col_labels[0].append(lbl)
                 label_default_colors[lbl] = "#f5e0dc"
 
                 for widget in (cell_frame, inner, dot, lbl):
@@ -3587,11 +3659,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     val_cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6 if is_last_col else 0, border_width=0, cursor="hand2")
                     val_cell_frame.grid(row=row_idx, column=col_idx, sticky="nsew", padx=(0, 0 if is_last_col else 2), pady=1)
                     row_cells[row_idx].append(val_cell_frame)
+                    col_cells[col_idx].append((row_idx, val_cell_frame))
                     
                     val = stats[col_key][metric_name]
                     total_for_col = stats[col_key]["Total Items"]
                     
-                    # Smart Percentages: only for Modality rows (not Total Items/Images/Videos)
                     csv_row.append(str(val))
 
                     text_color = "#f5e0dc" if val > 0 else "#6c7086"
@@ -3603,28 +3675,76 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     v_lbl = ctk.CTkLabel(inner_val_frame, text=str(val), font=ctk.CTkFont(size=14, weight=weight), text_color=text_color)
                     v_lbl.pack(side="left")
                     row_labels[row_idx].append(v_lbl)
+                    col_labels[col_idx].append(v_lbl)
                     label_default_colors[v_lbl] = text_color
                     
+                    vertical_pct = None
+                    horizontal_pct = None
+                    if row_idx > 1 and val > 0:
+                        # --- Vertical Calculation ---
+                        v_denom = 0
+                        
+                        # Sum up all modality items for this column to ensure vertical percentages sum to 100%
+                        # excluding items that have no text, image, or video.
+                        modality_sum = sum(stats[col_key][m] for m in [
+                            "Text Only", "Image Only", "Video Only", 
+                            "Text + Image", "Text + Video", "Image + Video", 
+                            "Text + Image + Video"
+                        ])
+                        
+                        if col_key in ["Real", "Fake"]:
+                            v_denom = modality_sum
+                        elif col_key in ["Misinfo", "Satire", "Clickbait"]:
+                            # For subclasses, we want their vertical sum to add up to 100% of their own modality sum
+                            # Wait, the prompt says "won't it be 100%". 
+                            # If col is Misinfo, then v_denom = Misinfo modality_sum.
+                            # So Misinfo modalities sum to 100% of Misinfo.
+                            v_denom = modality_sum
+                            
+                        if v_denom > 0:
+                            vertical_pct = int(round((val / v_denom) * 100))
+                            
+                        # --- Horizontal Calculation ---
+                        h_denom = 0
+                        if col_key in ["Real", "Fake"]:
+                            h_denom = stats["Total"][metric_name]
+                        elif col_key in ["Misinfo", "Satire", "Clickbait"]:
+                            h_denom = stats["Fake"][metric_name]
+                            
+                        if h_denom > 0:
+                            horizontal_pct = int(round((val / h_denom) * 100))
+
                     pct_lbl = None
-                    if row_idx > 3 and val > 0 and total_for_col > 0:
-                        pct = int((val / total_for_col) * 100)
-                        pct_color = "#9399b2" # Subtle gray for percentage
-                        pct_lbl = ctk.CTkLabel(inner_val_frame, text=f"({pct}%)", font=ctk.CTkFont(size=12, weight="bold"), text_color=pct_color)
+                    if vertical_pct is not None or horizontal_pct is not None:
+                        v_text = f"({vertical_pct}%)" if vertical_pct is not None else ""
+                        h_text = f"({horizontal_pct}%)" if horizontal_pct is not None else ""
+                        # We initialize with text="" to hide it visually without crashing CTk
+                        pct_lbl = ctk.CTkLabel(inner_val_frame, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#9399b2")
+                        pct_lbl._stored_vertical_text = v_text
+                        pct_lbl._stored_horizontal_text = h_text
+                        
+                        pct_lbl._vertical_highlight_color = "#bac2de"
+                        if col_key in ["Misinfo", "Satire", "Clickbait"]:
+                            pct_lbl._horizontal_highlight_color = "#fab387" # Soft orange to differentiate
+                        else:
+                            pct_lbl._horizontal_highlight_color = "#bac2de"
+                            
                         pct_lbl.pack(side="left", padx=(6, 0))
                         row_labels[row_idx].append(pct_lbl)
-                        label_default_colors[pct_lbl] = pct_color
+                        col_labels[col_idx].append(pct_lbl)
+                        label_default_colors[pct_lbl] = "HIDDEN_PCT"
 
-                    val_cell_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    val_cell_frame.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
                     val_cell_frame.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                     val_cell_frame.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-                    inner_val_frame.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    inner_val_frame.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
                     inner_val_frame.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                     inner_val_frame.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-                    v_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                    v_lbl.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
                     v_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                     v_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
                     if pct_lbl:
-                        pct_lbl.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
+                        pct_lbl.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
                         pct_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                         pct_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
                 
@@ -3632,10 +3752,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             
             active_export_data = export_rows
 
-        def on_category_change(choice):
-            draw_dashboard(choice)
+        def on_filter_change(*args):
+            draw_dashboard()
 
-        ctk.CTkOptionMenu(top_frame, values=category_options, variable=category_var, command=on_category_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
+        ctk.CTkOptionMenu(top_frame, values=category_options, variable=category_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=(0, 10))
+        ctk.CTkOptionMenu(top_frame, values=annotator_options, variable=annotator_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
 
         def export_csv():
             if not all_records:
@@ -3713,7 +3834,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                        fg_color="#313244", hover_color="#45475a", width=140).pack(side="right")
 
         # Initial draw
-        draw_dashboard("All Categories")
+        draw_dashboard()
 
     # REVIEW MODE
 
@@ -4690,7 +4811,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.update()
             # Provide temporary visual feedback on successful clipboard copy
             copy_btn.configure(text="✅ Copied!")
-            self.after(2000, lambda: copy_btn.configure(text="📋 Copy Command"))
+            self.after(2000, lambda: copy_btn.winfo_exists() and copy_btn.configure(text="📋 Copy Command"))
             
         btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
         btn_frame.pack(pady=20)
@@ -4849,7 +4970,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self._pack_radios_horizontal()
         
         # Ensure the reviewed badge is hidden when leaving Re-label mode
-        self.done_label.configure(image="", text="")
+        self.done_label.configure(image=None, text="")
         self.done_indicator_frame.pack_forget()
 
     def _restore_annotate_fields(self):
@@ -5140,11 +5261,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if self.reviewed_badge_img:
                 self.done_label.configure(image=self.reviewed_badge_img, text="")
             else:
-                self.done_label.configure(image="", text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+                self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
             # Show the indicator frame
             self.done_indicator_frame.pack(side="bottom", expand=True, fill="both", padx=12, pady=(10, 20))
         else:
-            self.done_label.configure(image="", text="")
+            self.done_label.configure(image=None, text="")
             # Hide the indicator frame completely if not reviewed
             self.done_indicator_frame.pack_forget()
 
@@ -5228,7 +5349,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if self.reviewed_badge_img:
             self.done_label.configure(image=self.reviewed_badge_img, text="")
         else:
-            self.done_label.configure(image="", text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
+            self.done_label.configure(image=None, text="ALREADY REVIEWED", font=ctk.CTkFont(size=18, weight="bold"), text_color="#2ecc71")
 
         # Repack the indicator frame to refresh visuals
         if not auto_advance:

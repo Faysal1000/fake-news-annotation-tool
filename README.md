@@ -104,6 +104,17 @@ The application has three modes: **Annotate** (for adding new data), **Review** 
 4. Review the news text, headline, and media previews, choose a rating (**Fake** or **Real**), select the fake news sub-type if Fake, and click **"💾 Save Decision"**.
 5. Once saved, a green "ALREADY REVIEWED" badge will appear for the record. The app will automatically advance to the first unrated record for your username.
 
+### Detailed Statistics Dashboard
+
+Click the **"📊 Detailed Stats"** button at the top to open a comprehensive, interactive dashboard:
+- **Summary Cards**: View top-level counts and percentages for Real vs. Fake news.
+- **Multimodal Grid**: See a breakdown of how your dataset uses different modalities (Text Only, Image Only, Text + Image, etc.) across different classifications.
+- **Dual-Mode Interactive Percentages**: The grid calculates percentages dynamically based on what you click!
+  - **Click a Column Header**: Shows vertical percentages (e.g., Out of all "Fake" items, what % have "Text Only"?).
+  - **Click a Row Header**: Shows horizontal percentages (e.g., Out of all "Text Only" items, what % are "Real" vs "Fake"?). Subclasses like Misinfo calculate relative to the "Fake" total.
+- **Dynamic Filters**: Filter the entire dashboard in real-time by selecting a specific **News Category** or a specific **Annotator Name**.
+- **Data Export**: Click **"📥 Export to CSV"** to save the currently filtered grid data as a spreadsheet.
+
 ### Validation Rules
 
 - **Annotator name** is required
