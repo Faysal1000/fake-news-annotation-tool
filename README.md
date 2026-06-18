@@ -115,6 +115,28 @@ Click the **"📊 Detailed Stats"** button at the top to open a comprehensive, i
 - **Dynamic Filters**: Filter the entire dashboard in real-time by selecting a specific **News Category** or a specific **Annotator Name**.
 - **Data Export**: Click **"📥 Export to CSV"** to save the currently filtered grid data as a spreadsheet.
 
+### Team Sync & Global Metrics
+
+You can sync your local metrics to the cloud using a GitHub Gist so your entire team can view each other's progress in real-time inside the **Detailed Statistics Dashboard**.
+
+**1. Setup Cloud Storage (Project Lead)**
+- Go to [gist.github.com](https://gist.github.com/)
+- Create a secret gist named exactly `metrics.json` and type `{}` in the file body.
+- Copy your **Gist ID** from the end of the URL (e.g., `https://gist.github.com/username/GIST_ID`).
+- Go to your GitHub **Settings -> Developer Settings -> Personal access tokens (classic)**.
+- Generate a new token with **No expiration** and check the **`gist`** scope box. Copy this **Access Token**.
+
+**2. Connect the App (All Annotators)**
+- Distribute the **Gist ID** and **Access Token** to your team.
+- Open the Annotator App and click **"📊 Detailed Stats"** to open the dashboard.
+- Click the **"🌐 Team Sync"** button in the top right.
+- Paste the Gist ID and Access Token and click **"Save & Sync"**.
+
+**3. View Global Metrics**
+- Once connected, your app will automatically sync your metrics in the background every 5 minutes.
+- Inside the Detailed Stats popup, toggle the **"Global Metrics (Team)"** switch to `ON`.
+- The dashboard will recalculate to show the **Team Total** and detailed modality metrics (Text Only, Image Only, etc.) broken down by every individual annotator on your team!
+
 ### Validation Rules
 
 - **Annotator name** is required

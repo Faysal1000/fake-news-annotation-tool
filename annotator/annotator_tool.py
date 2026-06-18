@@ -67,6 +67,7 @@ import requests                      # For version checking
 import threading                     # For non-blocking API calls
 import platform                      # For OS detection
 import random                        # For balanced kappa sample randomization
+import time                          # For background sync timers
 
 # Safe drag-and-drop setup
 # Attempts to load tkinterdnd2 dynamically. If the library or underlying Tcl system
@@ -304,6 +305,35 @@ def get_label_counts():
                 result["videos"] += 1
     return result
 
+def get_full_config():
+    """
+    Load the full configuration dictionary from the config file.
+    """
+    if CONFIG_PATH.exists():
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+def save_full_config(config_dict):
+    """
+    Save the full configuration dictionary to the config file.
+    """
+    with open(CONFIG_PATH, "w") as f:
+        json.dump(config_dict, f)
+
+def get_machine_id():
+    """
+    Get or generate a unique machine ID for global metrics syncing.
+    """
+    cfg = get_full_config()
+    if "machine_id" not in cfg:
+        cfg["machine_id"] = str(uuid.uuid4())
+        save_full_config(cfg)
+    return cfg["machine_id"]
+
 def save_config(annotator_name):
     """
     Persist the annotator's name to a hidden JSON config file.
@@ -315,8 +345,9 @@ def save_config(annotator_name):
     Args:
         annotator_name: The annotator's name string to save.
     """
-    with open(CONFIG_PATH, "w") as f:
-        json.dump({"annotator": annotator_name}, f)
+    cfg = get_full_config()
+    cfg["annotator"] = annotator_name
+    save_full_config(cfg)
 
 def load_config():
     """
@@ -327,10 +358,7 @@ def load_config():
     Returns:
         str: The saved annotator name, or empty string if no config exists.
     """
-    if CONFIG_PATH.exists():
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f).get("annotator", "")
-    return ""
+    return get_full_config().get("annotator", "")
 
 def sanitize_name(name):
     """
@@ -967,6 +995,14 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Stores user progress draft when switching between different views
         self.draft_annotation = None
 
+        # Global Metrics Sync State
+        self.global_metrics_enabled = ctk.BooleanVar(value=False)
+        self.global_metrics_data = {}
+        self.last_global_sync_time = None
+        self.last_uploaded_counts = {}
+        self.is_global_syncing = False
+        self._sync_global_metrics_loop()
+
         # Re-label Mode State
         # Holds all records loaded from the kappa calculation target CSV
         self.kappa_records = []
@@ -979,6 +1015,9 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self._build_ui()
         self._setup_dnd()
         self._update_stats()
+
+        # Start the background 5-minute sync loop
+        self.after(5000, self._sync_global_metrics_loop)
 
         # Automatically save the annotator name field as the user types
         self.annotator_entry.bind("<KeyRelease>",
@@ -3286,6 +3325,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if news_cats:
             # Instantiate section header
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  ", font=ctk.CTkFont(size=12), text_color="#aaa")
+            lbl.pack(side="left", padx=(0, 6))
             
             # Sort category keys alphabetically to guarantee a stable, predictable layout order
             sorted_cats = sorted(news_cats.items())
@@ -3298,6 +3338,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         else:
             # Fallback message displayed when no categories have been saved yet
             lbl = ctk.CTkLabel(self.category_stats_frame, text="News Categories  ▸  No entries yet", font=ctk.CTkFont(size=12), text_color="#aaa")
+            lbl.pack(side="left", padx=(0, 6))
 
         # Force Tkinter layout engine update to process changes before arranging widget coordinate paths
         self.stats_frame.update_idletasks()
@@ -3338,7 +3379,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         popup = ctk.CTkToplevel(self)
         popup.title("Detailed Statistics Dashboard")
         popup.configure(fg_color="#11111b")  # Darker premium background
-        popup.attributes("-topmost", True)
+        popup.transient(self)
+        popup.grab_set()
         popup.resizable(True, True)
 
         pw, ph = 960, 680
@@ -3374,6 +3416,30 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         info_btn = ctk.CTkButton(top_frame, text="❓", width=28, height=28, fg_color="transparent", hover_color="#313244", font=ctk.CTkFont(size=14), command=show_info)
         info_btn.pack(side="right", padx=(10, 0))
         
+        # Add Team Sync and Global Metrics Toggle
+        self.team_sync_btn = ctk.CTkButton(top_frame, text="🌐 Team Sync", command=self._show_team_sync_popup,
+                                          width=100, height=28,
+                                          font=ctk.CTkFont(size=13),
+                                          fg_color="#27ae60", hover_color="#2ecc71",
+                                          border_width=1, border_color="#555",
+                                          corner_radius=6)
+        self.team_sync_btn.pack(side="right", padx=(10, 10))
+
+        def on_global_toggle():
+            # Update the dashboard whenever the toggle is clicked
+            draw_dashboard()
+
+        self.active_detailed_popup = popup
+
+        self.global_toggle = ctk.CTkSwitch(top_frame, text="Global Metrics (Team)", 
+                                           variable=self.global_metrics_enabled,
+                                           command=on_global_toggle,
+                                           font=ctk.CTkFont(size=13, weight="bold"))
+        self.global_toggle.pack(side="right", padx=10)
+
+        self.sync_time_label = ctk.CTkLabel(top_frame, text="", font=ctk.CTkFont(size=11), text_color="#a6adc8")
+        self.sync_time_label.pack(side="right", padx=5)
+
         # Container for the dashboard (Cards + Grid)
         dash_container = ctk.CTkFrame(popup, fg_color="transparent")
         dash_container.pack(fill="both", expand=True)
@@ -3383,63 +3449,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Active subset data for CSV export
         active_export_data = []
 
-        def calculate_stats(records):
-            total_items = 0
-            total_images = 0
-            total_videos = 0
-            text_only = 0
-            image_only = 0
-            video_only = 0
-            text_image = 0
-            text_video = 0
-            image_video = 0
-            text_image_video = 0
-
-            for r in records:
-                total_items += 1
-                ip = (r.get("image_path") or "").strip()
-                img_list = [p for p in ip.split(";") if p.strip()]
-                total_images += len(img_list)
-                
-                vp = (r.get("video_path") or "").strip()
-                has_video = bool(vp)
-                if has_video:
-                    total_videos += 1
-                    
-                t_content = (r.get("text") or "").strip()
-                h_content = (r.get("heading") or "").strip()
-                has_text = (len(t_content) + len(h_content)) >= MIN_TEXT_LENGTH
-                
-                has_image = bool(img_list)
-                
-                if has_text and not has_image and not has_video:
-                    text_only += 1
-                elif not has_text and has_image and not has_video:
-                    image_only += 1
-                elif not has_text and not has_image and has_video:
-                    video_only += 1
-                elif has_text and has_image and not has_video:
-                    text_image += 1
-                elif has_text and not has_image and has_video:
-                    text_video += 1
-                elif not has_text and has_image and has_video:
-                    image_video += 1
-                elif has_text and has_image and has_video:
-                    text_image_video += 1
-
-            return {
-                "Total Items": total_items,
-                "Total Images": total_images,
-                "Total Videos": total_videos,
-                "Text Only": text_only,
-                "Image Only": image_only,
-                "Video Only": video_only,
-                "Text + Image": text_image,
-                "Text + Video": text_video,
-                "Image + Video": image_video,
-                "Text + Image + Video": text_image_video
-            }
-
         def draw_dashboard(*args):
             selected_category = category_var.get()
             selected_annotator = annotator_var.get()
@@ -3448,33 +3457,89 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             for widget in dash_container.winfo_children():
                 widget.destroy()
 
-            # Filter records
-            filtered_records = all_records
-            if selected_category != "All Categories":
-                filtered_records = [r for r in filtered_records if (r.get("category") or "").strip() == selected_category]
-            if selected_annotator != "All Annotators":
-                filtered_records = [r for r in filtered_records if (r.get("annotator") or "").strip() == selected_annotator]
+            is_global = self.global_metrics_enabled.get()
 
-            # --- EMPTY STATE ---
-            if not filtered_records:
-                empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
-                empty_frame.pack(expand=True)
-                ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
-                ctk.CTkLabel(empty_frame, text="No Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
-                ctk.CTkLabel(empty_frame, text=f"No annotated items match the current filters.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
-                active_export_data = []
-                return
+            # Update sync time label
+            cfg = get_full_config()
+            if not cfg.get("gist_id") or not cfg.get("github_token"):
+                self.sync_time_label.configure(text="Not connected")
+            elif hasattr(self, 'last_global_sync_time') and self.last_global_sync_time:
+                mins = int((time.time() - self.last_global_sync_time) / 60)
+                if mins == 0:
+                    self.sync_time_label.configure(text="Synced just now")
+                else:
+                    self.sync_time_label.configure(text=f"Synced {mins} min ago")
+            else:
+                self.sync_time_label.configure(text="Not synced yet")
 
-            subsets = {
-                "Total": filtered_records,
-                "Real": [r for r in filtered_records if (r.get("label") or "").strip() == "Real"],
-                "Fake": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake"],
-                "Misinfo": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
-                "Satire": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
-                "Clickbait": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
-            }
+            if is_global:
+                # --- GLOBAL METRICS MODE ---
+                # Build stats by aggregating from self.global_metrics_data
+                stats = {
+                    "Total": {}, "Real": {}, "Fake": {},
+                    "Misinfo": {}, "Satire": {}, "Clickbait": {}
+                }
+                for c in stats:
+                    stats[c] = {
+                        "Total Items": 0, "Total Images": 0, "Total Videos": 0,
+                        "Text Only": 0, "Image Only": 0, "Video Only": 0,
+                        "Text + Image": 0, "Text + Video": 0, "Image + Video": 0, "Text + Image + Video": 0
+                    }
 
-            stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
+                found_any = False
+                for machine_uuid, machine_data in self.global_metrics_data.items():
+                    for ann_name, ann_stats in machine_data.items():
+                        if selected_annotator != "All Annotators" and selected_annotator != ann_name:
+                            continue
+                        
+                        found_any = True
+                        for col_name, subset_metrics in ann_stats.items():
+                            if col_name in stats:
+                                for metric, val in subset_metrics.items():
+                                    stats[col_name][metric] += val
+                
+                if not found_any:
+                    empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
+                    empty_frame.pack(expand=True)
+                    if getattr(self, 'is_global_syncing', False):
+                        ctk.CTkLabel(empty_frame, text="⏳", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
+                        ctk.CTkLabel(empty_frame, text="Syncing Team Data...", font=ctk.CTkFont(size=24, weight="bold"), text_color="#f39c12").pack(pady=(0, 5))
+                        ctk.CTkLabel(empty_frame, text="Please wait while we fetch the latest metrics from GitHub.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                    else:
+                        ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
+                        ctk.CTkLabel(empty_frame, text="No Team Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
+                        ctk.CTkLabel(empty_frame, text="Ensure your Team Sync token is configured properly or wait for the next sync.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                    active_export_data = []
+                    return
+            else:
+                # --- LOCAL METRICS MODE ---
+                # Filter records
+                filtered_records = all_records
+                if selected_category != "All Categories":
+                    filtered_records = [r for r in filtered_records if (r.get("category") or "").strip() == selected_category]
+                if selected_annotator != "All Annotators":
+                    filtered_records = [r for r in filtered_records if (r.get("annotator") or "").strip() == selected_annotator]
+
+                # --- EMPTY STATE ---
+                if not filtered_records:
+                    empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
+                    empty_frame.pack(expand=True)
+                    ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
+                    ctk.CTkLabel(empty_frame, text="No Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
+                    ctk.CTkLabel(empty_frame, text=f"No annotated items match the current filters.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                    active_export_data = []
+                    return
+
+                subsets = {
+                    "Total": filtered_records,
+                    "Real": [r for r in filtered_records if (r.get("label") or "").strip() == "Real"],
+                    "Fake": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake"],
+                    "Misinfo": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+                    "Satire": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+                    "Clickbait": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+                }
+
+                stats = {col_name: self._compute_metrics_for_subset(subset) for col_name, subset in subsets.items()}
 
             # --- SUMMARY CARDS ---
             cards_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
@@ -3496,9 +3561,14 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             
             total_media = stats["Total"]["Total Images"] + stats["Total"]["Total Videos"]
 
-            create_card(cards_frame, "Total Items", total_count, "Annotated entries", 0, "#1e1e2e")
-            create_card(cards_frame, "Authenticity Split", f"{real_pct}% / {fake_pct}%", f"{real_count} Real, {fake_count} Fake", 1, "#1e1e2e")
-            create_card(cards_frame, "Total Media", total_media, f"{stats['Total']['Total Images']} Images, {stats['Total']['Total Videos']} Videos", 2, "#1e1e2e")
+            if is_global:
+                create_card(cards_frame, "🌐 TEAM TOTAL ITEMS", total_count, "All annotators combined", 0, "#2c2c54")
+                create_card(cards_frame, "Team Authenticity Split", f"{real_pct}% / {fake_pct}%", f"{real_count} Real, {fake_count} Fake", 1, "#2c2c54")
+                create_card(cards_frame, "Team Total Media", total_media, f"{stats['Total']['Total Images']} Images, {stats['Total']['Total Videos']} Videos", 2, "#2c2c54")
+            else:
+                create_card(cards_frame, "Local Total Items", total_count, "Your annotated entries", 0, "#1e1e2e")
+                create_card(cards_frame, "Local Authenticity Split", f"{real_pct}% / {fake_pct}%", f"{real_count} Real, {fake_count} Fake", 1, "#1e1e2e")
+                create_card(cards_frame, "Local Total Media", total_media, f"{stats['Total']['Total Images']} Images, {stats['Total']['Total Videos']} Videos", 2, "#1e1e2e")
 
             # --- DETAILED GRID ---
             scroll = ctk.CTkScrollableFrame(dash_container, fg_color="#181825", corner_radius=16)
@@ -3834,6 +3904,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                        fg_color="#313244", hover_color="#45475a", width=140).pack(side="right")
 
         # Initial draw
+        popup.redraw_cmd = draw_dashboard
         draw_dashboard()
 
     # REVIEW MODE
@@ -5605,6 +5676,308 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             # Revert text input to the active record number if parsing fails
             self.record_index_entry.delete(0, "end")
             self.record_index_entry.insert(0, str(self.current_kappa_index + 1))
+
+    # ---------------------------------------------------------
+    # GLOBAL METRICS SYNC LOGIC
+    # ---------------------------------------------------------
+
+    def _on_global_toggle_change(self):
+        # Refresh the stats view
+        self._update_stats()
+
+    def _compute_metrics_for_subset(self, records):
+        total_items = 0
+        total_images = 0
+        total_videos = 0
+        text_only = 0
+        image_only = 0
+        video_only = 0
+        text_image = 0
+        text_video = 0
+        image_video = 0
+        text_image_video = 0
+
+        for r in records:
+            total_items += 1
+            ip = (r.get("image_path") or "").strip()
+            img_list = [p for p in ip.split(";") if p.strip()]
+            total_images += len(img_list)
+            
+            vp = (r.get("video_path") or "").strip()
+            has_video = bool(vp)
+            if has_video:
+                total_videos += 1
+                
+            t_content = (r.get("text") or "").strip()
+            h_content = (r.get("heading") or "").strip()
+            has_text = (len(t_content) + len(h_content)) >= MIN_TEXT_LENGTH
+            
+            has_image = bool(img_list)
+            
+            if has_text and not has_image and not has_video:
+                text_only += 1
+            elif not has_text and has_image and not has_video:
+                image_only += 1
+            elif not has_text and not has_image and has_video:
+                video_only += 1
+            elif has_text and has_image and not has_video:
+                text_image += 1
+            elif has_text and not has_image and has_video:
+                text_video += 1
+            elif not has_text and has_image and has_video:
+                image_video += 1
+            elif has_text and has_image and has_video:
+                text_image_video += 1
+
+        return {
+            "Total Items": total_items,
+            "Total Images": total_images,
+            "Total Videos": total_videos,
+            "Text Only": text_only,
+            "Image Only": image_only,
+            "Video Only": video_only,
+            "Text + Image": text_image,
+            "Text + Video": text_video,
+            "Image + Video": image_video,
+            "Text + Image + Video": text_image_video
+        }
+
+    def _calculate_grouped_local_stats(self):
+        """
+        Reads dataset.csv and groups detailed metrics by annotator name.
+        """
+        grouped_records = {}
+        if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
+            return {}
+        
+        with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                ann = (row.get("annotator") or "Unknown").strip()
+                if ann not in grouped_records:
+                    grouped_records[ann] = []
+                grouped_records[ann].append(row)
+                
+        grouped_stats = {}
+        for ann, records in grouped_records.items():
+            subsets = {
+                "Total": records,
+                "Real": [r for r in records if (r.get("label") or "").strip() == "Real"],
+                "Fake": [r for r in records if (r.get("label") or "").strip() == "Fake"],
+                "Misinfo": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+                "Satire": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+                "Clickbait": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+            }
+            grouped_stats[ann] = {col_name: self._compute_metrics_for_subset(subset) for col_name, subset in subsets.items()}
+            
+        return grouped_stats
+
+    def _sync_global_metrics_loop(self):
+        """
+        Runs every 5 minutes in a background thread to sync metrics.
+        """
+        threading.Thread(target=self._sync_global_metrics_worker, daemon=True).start()
+        # Schedule the next run in 5 minutes (300,000 ms)
+        self.after(300000, self._sync_global_metrics_loop)
+
+    def _sync_global_metrics_worker(self):
+        self.is_global_syncing = True
+        if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
+            self.after(0, self.active_detailed_popup.redraw_cmd)
+
+        cfg = get_full_config()
+        gist_id = cfg.get("gist_id")
+        github_token = cfg.get("github_token")
+        
+        if not gist_id or not github_token:
+            return
+            
+        machine_id = get_machine_id()
+        current_local_stats = self._calculate_grouped_local_stats()
+        
+        # Check if local stats have changed since last upload
+        if self.last_uploaded_counts == current_local_stats:
+            # If we don't need to upload, we should still fetch to get updates from others
+            needs_upload = False
+        else:
+            needs_upload = True
+
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+        
+        try:
+            # 1. Fetch current Gist
+            resp = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=10)
+            if resp.status_code != 200:
+                print(f"[SYNC ERROR] Failed to fetch Gist: {resp.status_code}")
+                return
+                
+            gist_data = resp.json()
+            files = gist_data.get("files", {})
+            if "metrics.json" not in files:
+                global_data = {}
+            else:
+                try:
+                    global_data = json.loads(files["metrics.json"]["content"])
+                except Exception:
+                    global_data = {}
+            
+            # 2. Update local tracking variable for UI rendering
+            self.global_metrics_data = dict(global_data)
+            
+            if needs_upload:
+                # 3. Merge our local stats into the global data
+                global_data[machine_id] = current_local_stats
+                
+                # 4. Upload back to Gist
+                payload = {
+                    "files": {
+                        "metrics.json": {
+                            "content": json.dumps(global_data, indent=2)
+                        }
+                    }
+                }
+                patch_resp = requests.patch(f"https://api.github.com/gists/{gist_id}", json=payload, headers=headers, timeout=10)
+                if patch_resp.status_code == 200:
+                    self.last_uploaded_counts = current_local_stats
+                    # Update local tracking again
+                    self.global_metrics_data = dict(global_data)
+                else:
+                    print(f"[SYNC ERROR] Failed to update Gist: {patch_resp.status_code}")
+            
+            # 5. Refresh UI if the toggle is ON
+            if self.global_metrics_enabled.get():
+                # We must update UI from the main thread
+                self.after(0, self._update_stats)
+                
+        except Exception as e:
+            print(f"[SYNC ERROR] Exception during sync: {e}")
+        finally:
+            self.is_global_syncing = False
+            self.last_global_sync_time = time.time()
+            if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
+                self.after(0, self.active_detailed_popup.redraw_cmd)
+
+    def _show_team_sync_popup(self):
+        """
+        Popup for configuring the GitHub Gist token.
+        """
+        popup = ctk.CTkToplevel(self)
+        popup.title("Team Sync Setup")
+        popup.configure(fg_color="#1a1a2e")
+        if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
+            popup.transient(self.active_detailed_popup)
+        else:
+            popup.transient(self)
+        popup.grab_set()
+        popup.resizable(False, False)
+        
+        pw, ph = 450, 380
+        popup.geometry(f"{pw}x{ph}")
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (pw // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
+        popup.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(popup, text="🌐 Team Global Metrics Sync", font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(20, 10))
+        ctk.CTkLabel(popup, text="Enter your Team's GitHub Gist ID and Access Token to sync\nyour metrics globally and view your teammates' progress.",
+                     text_color="#aaa", font=ctk.CTkFont(size=12)).pack(pady=(0, 15))
+
+        cfg = get_full_config()
+        
+        form_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        form_frame.pack(fill="x", padx=30, pady=10)
+        
+        ctk.CTkLabel(form_frame, text="GitHub Gist ID:", anchor="w").pack(fill="x")
+        gist_entry = ctk.CTkEntry(form_frame, height=35)
+        gist_entry.pack(fill="x", pady=(2, 12))
+        if "gist_id" in cfg:
+            gist_entry.insert(0, cfg["gist_id"])
+            
+        ctk.CTkLabel(form_frame, text="GitHub Access Token (PAT):", anchor="w").pack(fill="x")
+        token_entry = ctk.CTkEntry(form_frame, height=35, show="*")
+        token_entry.pack(fill="x", pady=(2, 5))
+        if "github_token" in cfg:
+            token_entry.insert(0, cfg["github_token"])
+            
+        error_label = ctk.CTkLabel(popup, text="", text_color="#e74c3c")
+        error_label.pack(pady=5)
+        
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=30, pady=10)
+        
+        def save_creds():
+            g_id = gist_entry.get().strip()
+            tkn = token_entry.get().strip()
+            if not g_id or not tkn:
+                error_label.configure(text="Please fill in both fields.")
+                return
+                
+            error_label.configure(text="Validating...", text_color="#f39c12")
+            popup.update()
+            
+            # Validate with GitHub
+            headers = {"Authorization": f"token {tkn}", "Accept": "application/vnd.github.v3+json"}
+            try:
+                resp = requests.get(f"https://api.github.com/gists/{g_id}", headers=headers, timeout=10)
+                if resp.status_code == 200:
+                    cfg["gist_id"] = g_id
+                    cfg["github_token"] = tkn
+                    save_full_config(cfg)
+                    error_label.configure(text="Success! Sync enabled.", text_color="#2ecc71")
+                    # Force an immediate sync
+                    threading.Thread(target=self._sync_global_metrics_worker, daemon=True).start()
+                    popup.after(1500, popup.destroy)
+                else:
+                    error_label.configure(text=f"Validation Failed (Code {resp.status_code}). Check your credentials.", text_color="#e74c3c")
+            except Exception as e:
+                error_label.configure(text=f"Network Error: {e}", text_color="#e74c3c")
+                
+        def delete_creds():
+            g_id = cfg.get("gist_id")
+            tkn = cfg.get("github_token")
+            machine_uuid = cfg.get("machine_id")
+
+            if g_id and tkn and machine_uuid:
+                error_label.configure(text="Removing data from cloud...", text_color="#f39c12")
+                popup.update()
+                try:
+                    headers = {"Authorization": f"token {tkn}", "Accept": "application/vnd.github.v3+json"}
+                    resp = requests.get(f"https://api.github.com/gists/{g_id}", headers=headers, timeout=10)
+                    if resp.status_code == 200:
+                        gist_data = resp.json()
+                        metrics_file = gist_data.get("files", {}).get("metrics.json")
+                        if metrics_file:
+                            try:
+                                cloud_data = json.loads(metrics_file.get("content", "{}"))
+                                if machine_uuid in cloud_data:
+                                    del cloud_data[machine_uuid]
+                                    patch_data = {"files": {"metrics.json": {"content": json.dumps(cloud_data, indent=2)}}}
+                                    requests.patch(f"https://api.github.com/gists/{g_id}", headers=headers, json=patch_data, timeout=10)
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
+            if "gist_id" in cfg: del cfg["gist_id"]
+            if "github_token" in cfg: del cfg["github_token"]
+            save_full_config(cfg)
+            self.global_metrics_data = {}
+            self.last_global_sync_time = None
+            self.last_uploaded_counts = {}
+            self.global_metrics_enabled.set(False)
+            
+            if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
+                self.after(0, self.active_detailed_popup.redraw_cmd)
+                
+            popup.destroy()
+        save_btn = ctk.CTkButton(btn_frame, text="💾 Save & Sync", command=save_creds, height=35, fg_color="#2ecc71", hover_color="#27ae60", text_color="black")
+        save_btn.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        
+        del_btn = ctk.CTkButton(btn_frame, text="Disconnect", command=delete_creds, height=35, fg_color="#e74c3c", hover_color="#c0392b")
+        del_btn.pack(side="left", fill="x", expand=True)
 
 # Launch the Tkinter application main loop when running this script directly
 if __name__ == "__main__":
