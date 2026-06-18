@@ -113,7 +113,7 @@ Click the **"📊 Detailed Stats"** button at the top to open a comprehensive, i
   - **Click a Column Header**: Shows vertical percentages (e.g., Out of all "Fake" items, what % have "Text Only"?).
   - **Click a Row Header**: Shows horizontal percentages (e.g., Out of all "Text Only" items, what % are "Real" vs "Fake"?). Subclasses like Misinfo calculate relative to the "Fake" total.
 - **Dynamic Filters**: Filter the entire dashboard in real-time by selecting a specific **News Category** or a specific **Annotator Name**.
-- **Data Export**: Click **"📥 Export to CSV"** to save the currently filtered grid data as a spreadsheet.
+- **Data Export**: Click **"📥 Export to CSV"** and choose to either export the **Current Dashboard** exactly as filtered, or generate a comprehensive report of **All Local Categories** broken down sequentially.
 
 ### Team Sync & Global Metrics
 
@@ -136,6 +136,7 @@ You can sync your local metrics to the cloud using a GitHub Gist so your entire 
 - Once connected, your app will automatically sync your metrics in the background every 5 minutes.
 - Inside the Detailed Stats popup, toggle the **"Global Metrics (Team)"** switch to `ON`.
 - The dashboard will recalculate to show the **Team Total** and detailed modality metrics (Text Only, Image Only, etc.) broken down by every individual annotator on your team!
+- *Note: If two team members use the exact same name on different computers, the app will smartly append a unique ID to their name so you can still track their progress separately.*
 
 ### Validation Rules
 

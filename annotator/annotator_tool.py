@@ -145,6 +145,14 @@ CATEGORIES = ["", "Politics", "Health", "Science", "Technology", "Sports",
 # Classifications for news labeled as Fake
 MULTI_CATEGORIES = ["Misinformation", "Satire", "Clickbait"]
 
+# Detailed dashboard columns and metrics shared by local and team statistics.
+DETAILED_STATS_COLUMNS = ["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
+DETAILED_STATS_METRICS = [
+    "Total Items", "Total Images", "Total Videos",
+    "Text Only", "Image Only", "Video Only",
+    "Text + Image", "Text + Video", "Image + Video", "Text + Image + Video"
+]
+
 # Minimum character length for heading or text combined to be considered as a 'Text' modality
 MIN_TEXT_LENGTH = 30
 
@@ -1001,7 +1009,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.last_global_sync_time = None
         self.last_uploaded_counts = {}
         self.is_global_syncing = False
-        self._sync_global_metrics_loop()
+        self._sync_lock = threading.Lock()
 
         # Re-label Mode State
         # Holds all records loaded from the kappa calculation target CSV
@@ -3371,6 +3379,138 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 print(f"[WARNING] Failed to read CSV for detailed stats: {e}")
         return records
 
+    def _filter_detailed_stats_records(self, records, selected_category="All Categories",
+                                       selected_annotator="All Annotators"):
+        filtered_records = records
+        if selected_category != "All Categories":
+            filtered_records = [
+                r for r in filtered_records
+                if (r.get("category") or "").strip() == selected_category
+            ]
+        if selected_annotator != "All Annotators":
+            filtered_records = [
+                r for r in filtered_records
+                if (r.get("annotator") or "").strip() == selected_annotator
+            ]
+        return filtered_records
+
+    def _detailed_stats_export_rows(self, stats):
+        headers = ["Modality / Metric", *DETAILED_STATS_COLUMNS]
+        rows = [headers]
+        for metric_name in DETAILED_STATS_METRICS:
+            rows.append([
+                metric_name,
+                *[str(stats[col_key][metric_name]) for col_key in DETAILED_STATS_COLUMNS]
+            ])
+        return rows
+
+    def _ask_detailed_stats_export_scope(self, parent):
+        """
+        Opens a small modal with explicit export-scope buttons.
+        Returns "current", "all", or None when canceled.
+        """
+        choice = {"value": None}
+
+        dialog = ctk.CTkToplevel(parent)
+        dialog.title("Export Statistics")
+        dialog.configure(fg_color="#1a1a2e")
+        dialog.transient(parent)
+        dialog.grab_set()
+        dialog.resizable(False, False)
+
+        pw, ph = 420, 175
+        dialog.geometry(f"{pw}x{ph}")
+        dialog.update_idletasks()
+        x = parent.winfo_x() + (parent.winfo_width() // 2) - (pw // 2)
+        y = parent.winfo_y() + (parent.winfo_height() // 2) - (ph // 2)
+        dialog.geometry(f"+{x}+{y}")
+
+        ctk.CTkLabel(
+            dialog,
+            text="Choose Export Scope",
+            font=ctk.CTkFont(size=17, weight="bold"),
+            text_color="#cdd6f4"
+        ).pack(pady=(20, 6))
+
+        ctk.CTkLabel(
+            dialog,
+            text="Pick exactly what should be written to the CSV.",
+            font=ctk.CTkFont(size=12),
+            text_color="#a6adc8"
+        ).pack(pady=(0, 18))
+
+        btn_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=22)
+
+        def finish(value):
+            choice["value"] = value
+            dialog.destroy()
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Current Dashboard",
+            command=lambda: finish("current"),
+            height=36,
+            fg_color="#4f46e5",
+            hover_color="#5c5cff"
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="All Local Categories",
+            command=lambda: finish("all"),
+            height=36,
+            fg_color="#313244",
+            hover_color="#45475a"
+        ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+        ctk.CTkButton(
+            btn_frame,
+            text="Cancel",
+            command=lambda: finish(None),
+            height=36,
+            fg_color="transparent",
+            border_width=1,
+            border_color="#555"
+        ).pack(side="left", fill="x", expand=True)
+
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(None))
+        parent.wait_window(dialog)
+        return choice["value"]
+
+    def _refresh_detailed_stats_filters(self, is_global, category_var, annotator_var,
+                                        category_menu, annotator_menu, option_provider):
+        """
+        Keeps detailed dashboard filters aligned with the selected metrics scope.
+        Category filtering is local-only because the Gist stores aggregate team metrics.
+        """
+        category_options, annotator_options = option_provider(is_global)
+
+        if is_global:
+            category_var.set("All Categories")
+            category_values = ["All Categories"]
+            category_state = "disabled"
+        else:
+            category_values = category_options
+            category_state = "normal"
+            if category_var.get() not in category_values:
+                category_var.set("All Categories")
+
+        if annotator_var.get() not in annotator_options:
+            annotator_var.set("All Annotators")
+
+        if category_menu is not None:
+            category_menu.configure(values=category_values, state=category_state)
+            if is_global:
+                category_menu.pack_forget()
+            elif not category_menu.winfo_manager():
+                if annotator_menu is not None:
+                    category_menu.pack(side="left", padx=(0, 10), before=annotator_menu)
+                else:
+                    category_menu.pack(side="left", padx=(0, 10))
+        if annotator_menu is not None:
+            annotator_menu.configure(values=annotator_options)
+
     def _show_detailed_stats_popup(self):
         """
         Displays a modal popup with a detailed dashboard breakdown of news modalities
@@ -3390,26 +3530,76 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
         popup.geometry(f"+{x}+{y}")
 
+        all_records = self._get_records_for_detailed_stats()
+        global_annotator_filter_map = {}
+
+        def _global_annotator_options():
+            entries = []
+            name_counts = {}
+            global_annotator_filter_map.clear()
+
+            for machine_uuid, machine_data in self.global_metrics_data.items():
+                if not isinstance(machine_data, dict):
+                    continue
+                for ann_name, ann_stats in machine_data.items():
+                    ann_label = str(ann_name).strip()
+                    if isinstance(ann_stats, dict) and ann_label:
+                        entries.append((ann_label, str(machine_uuid)))
+                        name_counts[ann_label] = name_counts.get(ann_label, 0) + 1
+
+            options = []
+            for ann_label, machine_uuid in sorted(entries):
+                if name_counts.get(ann_label, 0) > 1:
+                    option_label = f"{ann_label}-{machine_uuid[-8:]}"
+                else:
+                    option_label = ann_label
+                global_annotator_filter_map[option_label] = (ann_label, machine_uuid)
+                options.append(option_label)
+            return options
+
+        def _dashboard_filter_options(is_global=False):
+            local_categories = {
+                (r.get("category") or "").strip()
+                for r in all_records
+                if (r.get("category") or "").strip()
+            }
+            preferred_categories = [c for c in CATEGORIES if c]
+            extra_categories = sorted(local_categories - set(preferred_categories))
+            category_values = ["All Categories"] + preferred_categories + extra_categories
+
+            local_annotators = {
+                (r.get("annotator") or "").strip()
+                for r in all_records
+                if (r.get("annotator") or "").strip()
+            }
+            if is_global:
+                annotator_values = ["All Annotators"] + _global_annotator_options()
+            else:
+                annotator_values = ["All Annotators"] + sorted(local_annotators)
+            return category_values, annotator_values
+
         # Top Controls Frame
         top_frame = ctk.CTkFrame(popup, fg_color="transparent")
         top_frame.pack(fill="x", padx=24, pady=(24, 10))
         
         ctk.CTkLabel(top_frame, text="Filter:", font=ctk.CTkFont(size=14, weight="bold"), text_color="#cdd6f4").pack(side="left", padx=(0, 10))
         
-        category_options = ["All Categories"] + [c for c in CATEGORIES if c]
+        category_options, annotator_options = _dashboard_filter_options(self.global_metrics_enabled.get())
         category_var = ctk.StringVar(value="All Categories")
-        
-        annotators = sorted(list(set(r.get("annotator", "").strip() for r in self._get_records_for_detailed_stats() if r.get("annotator", "").strip())))
-        annotator_options = ["All Annotators"] + annotators
         annotator_var = ctk.StringVar(value="All Annotators")
+        category_menu = None
+        annotator_menu = None
         
         def show_info():
             info_text = (
                 "Dashboard Calculation Metrics:\n\n"
-                "1. Hidden by Default: Percentages only appear when you click a row or column header.\n\n"
-                "2. Column Clicks (Vertical %): Shows the distribution of modalities for that specific column.\n\n"
-                "3. Row Clicks (Horizontal %): 'Real' & 'Fake' are percentages of the 'Total' column. 'Misinfo', 'Satire', & 'Clickbait' are percentages of the 'Fake' column.\n\n"
-                "4. Raw Counts: The 'Total Items' row and 'Total' column always show raw instance counts."
+                "1. Local Metrics: Calculated from your local dataset.csv and can be filtered by category and annotator.\n\n"
+                "2. Global Metrics (Team): Calculated from synced aggregate counts in the team's GitHub Gist. No raw article text, notes, sources, or media files are uploaded.\n\n"
+                "3. Duplicate Names: If two synced machines use the same annotator name, the Team filter shows Name-last8uuid to keep them separate.\n\n"
+                "4. Hidden by Default: Percentages only appear when you click a row or column header.\n\n"
+                "5. Column Clicks (Vertical %): Shows the distribution of modalities for that specific column.\n\n"
+                "6. Row Clicks (Horizontal %): 'Real' & 'Fake' are percentages of the 'Total' column. 'Misinfo', 'Satire', & 'Clickbait' are percentages of the 'Fake' column.\n\n"
+                "7. Raw Counts: The 'Total Items' row and 'Total' column always show raw instance counts."
             )
             messagebox.showinfo("Metrics Info", info_text, parent=popup)
 
@@ -3443,21 +3633,23 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Container for the dashboard (Cards + Grid)
         dash_container = ctk.CTkFrame(popup, fg_color="transparent")
         dash_container.pack(fill="both", expand=True)
-
-        all_records = self._get_records_for_detailed_stats()
         
         # Active subset data for CSV export
         active_export_data = []
 
         def draw_dashboard(*args):
-            selected_category = category_var.get()
-            selected_annotator = annotator_var.get()
-            
             nonlocal active_export_data
             for widget in dash_container.winfo_children():
                 widget.destroy()
 
             is_global = self.global_metrics_enabled.get()
+            self._refresh_detailed_stats_filters(
+                is_global, category_var, annotator_var, category_menu, annotator_menu,
+                _dashboard_filter_options
+            )
+
+            selected_category = category_var.get()
+            selected_annotator = annotator_var.get()
 
             # Update sync time label
             cfg = get_full_config()
@@ -3475,28 +3667,25 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if is_global:
                 # --- GLOBAL METRICS MODE ---
                 # Build stats by aggregating from self.global_metrics_data
-                stats = {
-                    "Total": {}, "Real": {}, "Fake": {},
-                    "Misinfo": {}, "Satire": {}, "Clickbait": {}
-                }
-                for c in stats:
-                    stats[c] = {
-                        "Total Items": 0, "Total Images": 0, "Total Videos": 0,
-                        "Text Only": 0, "Image Only": 0, "Video Only": 0,
-                        "Text + Image": 0, "Text + Video": 0, "Image + Video": 0, "Text + Image + Video": 0
-                    }
-
+                stats = self._empty_detailed_stats()
                 found_any = False
+                selected_global_entry = global_annotator_filter_map.get(selected_annotator)
                 for machine_uuid, machine_data in self.global_metrics_data.items():
+                    if not isinstance(machine_data, dict):
+                        continue
                     for ann_name, ann_stats in machine_data.items():
-                        if selected_annotator != "All Annotators" and selected_annotator != ann_name:
+                        if not isinstance(ann_stats, dict):
                             continue
-                        
-                        found_any = True
-                        for col_name, subset_metrics in ann_stats.items():
-                            if col_name in stats:
-                                for metric, val in subset_metrics.items():
-                                    stats[col_name][metric] += val
+                        ann_label = str(ann_name).strip()
+                        if selected_annotator != "All Annotators":
+                            if selected_global_entry is None:
+                                continue
+                            selected_name, selected_machine_uuid = selected_global_entry
+                            if ann_label != selected_name or str(machine_uuid) != selected_machine_uuid:
+                                continue
+
+                        if self._merge_detailed_stats(stats, ann_stats):
+                            found_any = True
                 
                 if not found_any:
                     empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
@@ -3508,17 +3697,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     else:
                         ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
                         ctk.CTkLabel(empty_frame, text="No Team Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
-                        ctk.CTkLabel(empty_frame, text="Ensure your Team Sync token is configured properly or wait for the next sync.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                        ctk.CTkLabel(empty_frame, text="Ensure Team Sync is configured, or choose an annotator with synced metrics.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
                     active_export_data = []
                     return
             else:
                 # --- LOCAL METRICS MODE ---
                 # Filter records
-                filtered_records = all_records
-                if selected_category != "All Categories":
-                    filtered_records = [r for r in filtered_records if (r.get("category") or "").strip() == selected_category]
-                if selected_annotator != "All Annotators":
-                    filtered_records = [r for r in filtered_records if (r.get("annotator") or "").strip() == selected_annotator]
+                filtered_records = self._filter_detailed_stats_records(
+                    all_records, selected_category, selected_annotator
+                )
 
                 # --- EMPTY STATE ---
                 if not filtered_records:
@@ -3530,16 +3717,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     active_export_data = []
                     return
 
-                subsets = {
-                    "Total": filtered_records,
-                    "Real": [r for r in filtered_records if (r.get("label") or "").strip() == "Real"],
-                    "Fake": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake"],
-                    "Misinfo": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
-                    "Satire": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
-                    "Clickbait": [r for r in filtered_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
-                }
-
-                stats = {col_name: self._compute_metrics_for_subset(subset) for col_name, subset in subsets.items()}
+                stats = self._compute_detailed_stats_for_records(filtered_records)
 
             # --- SUMMARY CARDS ---
             cards_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
@@ -3587,7 +3765,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             for c in range(1, 7):
                 grid_frame.columnconfigure(c, weight=1, uniform="col_stat", minsize=100)
                 
-            headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
+            headers = ["Modality / Metric", *DETAILED_STATS_COLUMNS]
+            export_rows = self._detailed_stats_export_rows(stats)
             
             active_highlight_row = [None]
             active_highlight_col = [None]
@@ -3689,8 +3868,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 ("Image + Video", "#f9e2af"),
                 ("Text + Image + Video", "#cba6f7")
             ]
-            
-            export_rows = [headers]
 
             for row_idx, (metric_name, dot_color) in enumerate(metrics, start=1):
                 bg_color = row_fg_even if row_idx % 2 == 0 else row_fg_odd
@@ -3698,7 +3875,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 row_labels[row_idx] = []
                 row_default_colors[row_idx] = bg_color
                 
-                cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6 if col_idx == 0 else 0, border_width=0, cursor="hand2")
+                cell_frame = ctk.CTkFrame(grid_frame, fg_color=bg_color, corner_radius=6, border_width=0, cursor="hand2")
                 cell_frame.grid(row=row_idx, column=0, sticky="nsew", padx=(0, 2), pady=1)
                 row_cells[row_idx].append(cell_frame)
                 col_cells[0].append((row_idx, cell_frame))
@@ -3721,8 +3898,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     widget.bind("<Button-1>", lambda e, r=row_idx: on_row_click(r))
                     widget.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                     widget.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-                
-                csv_row = [metric_name]
 
                 for col_idx, col_key in enumerate(["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"], start=1):
                     is_last_col = (col_idx == 6)
@@ -3732,10 +3907,6 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     col_cells[col_idx].append((row_idx, val_cell_frame))
                     
                     val = stats[col_key][metric_name]
-                    total_for_col = stats[col_key]["Total Items"]
-                    
-                    csv_row.append(str(val))
-
                     text_color = "#f5e0dc" if val > 0 else "#6c7086"
                     weight = "bold" if val > 0 or row_idx == 1 else "normal"
                     
@@ -3817,26 +3988,56 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                         pct_lbl.bind("<Button-1>", lambda e, c=col_idx: on_col_click(c))
                         pct_lbl.bind("<Enter>", lambda e, r=row_idx: on_enter(e, r))
                         pct_lbl.bind("<Leave>", lambda e, r=row_idx: on_leave(e, r))
-                
-                export_rows.append(csv_row)
             
             active_export_data = export_rows
 
         def on_filter_change(*args):
             draw_dashboard()
 
-        ctk.CTkOptionMenu(top_frame, values=category_options, variable=category_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left", padx=(0, 10))
-        ctk.CTkOptionMenu(top_frame, values=annotator_options, variable=annotator_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold")).pack(side="left")
+        category_menu = ctk.CTkOptionMenu(top_frame, values=category_options, variable=category_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold"))
+        category_menu.pack(side="left", padx=(0, 10))
+        annotator_menu = ctk.CTkOptionMenu(top_frame, values=annotator_options, variable=annotator_var, command=on_filter_change, fg_color="#313244", button_color="#4f46e5", button_hover_color="#5c5cff", font=ctk.CTkFont(size=13, weight="bold"))
+        annotator_menu.pack(side="left")
 
         def export_csv():
-            if not all_records:
-                messagebox.showinfo("Export", "No data to export.", parent=popup)
-                return
+            is_global_export = self.global_metrics_enabled.get()
+            export_all_categories = False
+
+            if not is_global_export:
+                export_choice = self._ask_detailed_stats_export_scope(popup)
+                if export_choice is None:
+                    return
+                export_all_categories = (export_choice == "all")
+
+            selected_annotator = annotator_var.get()
+
+            if export_all_categories:
+                scoped_records = self._filter_detailed_stats_records(
+                    all_records, "All Categories", selected_annotator
+                )
+                if not scoped_records:
+                    messagebox.showinfo("Export", "No local data to export.", parent=popup)
+                    return
+
+                present_categories = {
+                    (r.get("category") or "").strip()
+                    for r in scoped_records
+                    if (r.get("category") or "").strip()
+                }
+                preferred_categories = [c for c in CATEGORIES if c in present_categories]
+                extra_categories = sorted(present_categories - set(preferred_categories))
+                categories_to_export = ["All Categories"] + preferred_categories + extra_categories
+                initialfile = "detailed_statistics_all_categories.csv"
+            else:
+                if not active_export_data:
+                    messagebox.showinfo("Export", "No data to export.", parent=popup)
+                    return
+                initialfile = "detailed_statistics_current.csv"
             
             filepath = filedialog.asksaveasfilename(
                 parent=popup,
                 defaultextension=".csv",
-                initialfile="detailed_statistics_all.csv",
+                initialfile=initialfile,
                 title="Save Detailed Statistics as CSV",
                 filetypes=[("CSV Files", "*.csv"), ("All Files", "*.*")]
             )
@@ -3844,47 +4045,29 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 try:
                     with open(filepath, "w", newline="", encoding="utf-8") as f:
                         writer = csv.writer(f)
-                        
-                        categories_to_export = ["All Categories"] + [c for c in CATEGORIES if c]
-                        headers = ["Modality / Metric", "Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]
-                        
-                        for cat in categories_to_export:
-                            # Filter records
-                            if cat == "All Categories":
-                                f_records = all_records
-                            else:
-                                f_records = [r for r in all_records if (r.get("category") or "").strip() == cat]
-                                
-                            if not f_records:
-                                continue # Skip empty categories
-                                
-                            subsets = {
-                                "Total": f_records,
-                                "Real": [r for r in f_records if (r.get("label") or "").strip() == "Real"],
-                                "Fake": [r for r in f_records if (r.get("label") or "").strip() == "Fake"],
-                                "Misinfo": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
-                                "Satire": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
-                                "Clickbait": [r for r in f_records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
-                            }
-                            
-                            c_stats = {col_name: calculate_stats(subset) for col_name, subset in subsets.items()}
-                            
-                            writer.writerow([f"=== CATEGORY: {cat.upper()} ==="])
-                            writer.writerow(headers)
-                            
-                            metrics_list = [
-                                "Total Items", "Total Images", "Total Videos",
-                                "Text Only", "Image Only", "Video Only",
-                                "Text + Image", "Text + Video", "Image + Video", "Text + Image + Video"
-                            ]
-                            
-                            for metric_name in metrics_list:
-                                row_data = [metric_name]
-                                for col_key in ["Total", "Real", "Fake", "Misinfo", "Satire", "Clickbait"]:
-                                    val = c_stats[col_key][metric_name]
-                                    row_data.append(str(val))
-                                writer.writerow(row_data)
-                            writer.writerow([]) # Blank row for separation
+                        writer.writerow(["Scope", "Team" if is_global_export else "Local"])
+                        writer.writerow(["Export", "All Categories" if export_all_categories else "Current Dashboard"])
+                        writer.writerow(["Category", "All Categories" if export_all_categories else category_var.get()])
+                        writer.writerow(["Annotator", selected_annotator])
+                        writer.writerow([])
+
+                        if export_all_categories:
+                            for cat in categories_to_export:
+                                if cat == "All Categories":
+                                    category_records = scoped_records
+                                else:
+                                    category_records = self._filter_detailed_stats_records(
+                                        scoped_records, cat, "All Annotators"
+                                    )
+                                if not category_records:
+                                    continue
+
+                                category_stats = self._compute_detailed_stats_for_records(category_records)
+                                writer.writerow([f"=== CATEGORY: {cat.upper()} ==="])
+                                writer.writerows(self._detailed_stats_export_rows(category_stats))
+                                writer.writerow([])
+                        else:
+                            writer.writerows(active_export_data)
                             
                     messagebox.showinfo("Success", f"Statistics successfully exported to:\n{filepath}", parent=popup)
                 except Exception as e:
@@ -5742,6 +5925,59 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             "Text + Image + Video": text_image_video
         }
 
+    def _empty_detailed_stats(self):
+        return {
+            col_name: {metric_name: 0 for metric_name in DETAILED_STATS_METRICS}
+            for col_name in DETAILED_STATS_COLUMNS
+        }
+
+    def _compute_detailed_stats_for_records(self, records):
+        subsets = {
+            "Total": records,
+            "Real": [r for r in records if (r.get("label") or "").strip() == "Real"],
+            "Fake": [r for r in records if (r.get("label") or "").strip() == "Fake"],
+            "Misinfo": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
+            "Satire": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
+            "Clickbait": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
+        }
+        return {
+            col_name: self._compute_metrics_for_subset(subset)
+            for col_name, subset in subsets.items()
+        }
+
+    def _merge_detailed_stats(self, target, source):
+        if not isinstance(source, dict):
+            return False
+
+        recognized = False
+        for col_name in DETAILED_STATS_COLUMNS:
+            subset_metrics = source.get(col_name)
+            if not isinstance(subset_metrics, dict):
+                continue
+            recognized = True
+            for metric_name in DETAILED_STATS_METRICS:
+                try:
+                    target[col_name][metric_name] += int(subset_metrics.get(metric_name, 0) or 0)
+                except (TypeError, ValueError):
+                    continue
+        return recognized
+
+    def _redraw_active_detailed_popup(self):
+        popup = getattr(self, "active_detailed_popup", None)
+        if popup is None:
+            return
+        try:
+            if popup.winfo_exists() and hasattr(popup, "redraw_cmd"):
+                popup.redraw_cmd()
+        except tk.TclError:
+            pass
+
+    def _queue_detailed_stats_redraw(self):
+        try:
+            self.after(0, self._redraw_active_detailed_popup)
+        except tk.TclError:
+            pass
+
     def _calculate_grouped_local_stats(self):
         """
         Reads dataset.csv and groups detailed metrics by annotator name.
@@ -5753,24 +5989,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ann = (row.get("annotator") or "Unknown").strip()
+                ann = (row.get("annotator") or "").strip() or "Unknown"
                 if ann not in grouped_records:
                     grouped_records[ann] = []
                 grouped_records[ann].append(row)
                 
-        grouped_stats = {}
-        for ann, records in grouped_records.items():
-            subsets = {
-                "Total": records,
-                "Real": [r for r in records if (r.get("label") or "").strip() == "Real"],
-                "Fake": [r for r in records if (r.get("label") or "").strip() == "Fake"],
-                "Misinfo": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Misinformation"],
-                "Satire": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Satire"],
-                "Clickbait": [r for r in records if (r.get("label") or "").strip() == "Fake" and (r.get("multi_category") or "").strip() == "Clickbait"]
-            }
-            grouped_stats[ann] = {col_name: self._compute_metrics_for_subset(subset) for col_name, subset in subsets.items()}
-            
-        return grouped_stats
+        return {
+            ann: self._compute_detailed_stats_for_records(records)
+            for ann, records in grouped_records.items()
+        }
 
     def _sync_global_metrics_loop(self):
         """
@@ -5781,33 +6008,32 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.after(300000, self._sync_global_metrics_loop)
 
     def _sync_global_metrics_worker(self):
-        self.is_global_syncing = True
-        if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
-            self.after(0, self.active_detailed_popup.redraw_cmd)
-
-        cfg = get_full_config()
-        gist_id = cfg.get("gist_id")
-        github_token = cfg.get("github_token")
-        
-        if not gist_id or not github_token:
+        if not self._sync_lock.acquire(blocking=False):
             return
-            
-        machine_id = get_machine_id()
-        current_local_stats = self._calculate_grouped_local_stats()
-        
-        # Check if local stats have changed since last upload
-        if self.last_uploaded_counts == current_local_stats:
-            # If we don't need to upload, we should still fetch to get updates from others
-            needs_upload = False
-        else:
-            needs_upload = True
 
-        headers = {
-            "Authorization": f"token {github_token}",
-            "Accept": "application/vnd.github.v3+json"
-        }
-        
+        sync_succeeded = False
         try:
+            cfg = get_full_config()
+            gist_id = cfg.get("gist_id")
+            github_token = cfg.get("github_token")
+
+            if not gist_id or not github_token:
+                self.is_global_syncing = False
+                self._queue_detailed_stats_redraw()
+                return
+
+            self.is_global_syncing = True
+            self._queue_detailed_stats_redraw()
+
+            machine_id = get_machine_id()
+            current_local_stats = self._calculate_grouped_local_stats()
+            needs_upload = self.last_uploaded_counts != current_local_stats
+
+            headers = {
+                "Authorization": f"token {github_token}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+
             # 1. Fetch current Gist
             resp = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=10)
             if resp.status_code != 200:
@@ -5823,9 +6049,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     global_data = json.loads(files["metrics.json"]["content"])
                 except Exception:
                     global_data = {}
+
+            latest_cfg = get_full_config()
+            if (latest_cfg.get("gist_id") != gist_id or
+                    latest_cfg.get("github_token") != github_token):
+                return
             
             # 2. Update local tracking variable for UI rendering
             self.global_metrics_data = dict(global_data)
+            sync_succeeded = True
             
             if needs_upload:
                 # 3. Merge our local stats into the global data
@@ -5846,19 +6078,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     self.global_metrics_data = dict(global_data)
                 else:
                     print(f"[SYNC ERROR] Failed to update Gist: {patch_resp.status_code}")
-            
-            # 5. Refresh UI if the toggle is ON
-            if self.global_metrics_enabled.get():
-                # We must update UI from the main thread
-                self.after(0, self._update_stats)
                 
         except Exception as e:
             print(f"[SYNC ERROR] Exception during sync: {e}")
         finally:
             self.is_global_syncing = False
-            self.last_global_sync_time = time.time()
-            if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
-                self.after(0, self.active_detailed_popup.redraw_cmd)
+            if sync_succeeded:
+                self.last_global_sync_time = time.time()
+            self._queue_detailed_stats_redraw()
+            self._sync_lock.release()
 
     def _show_team_sync_popup(self):
         """
@@ -5969,8 +6197,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self.last_uploaded_counts = {}
             self.global_metrics_enabled.set(False)
             
-            if hasattr(self, 'active_detailed_popup') and self.active_detailed_popup.winfo_exists():
-                self.after(0, self.active_detailed_popup.redraw_cmd)
+            self._queue_detailed_stats_redraw()
                 
             popup.destroy()
         save_btn = ctk.CTkButton(btn_frame, text="💾 Save & Sync", command=save_creds, height=35, fg_color="#2ecc71", hover_color="#27ae60", text_color="black")
