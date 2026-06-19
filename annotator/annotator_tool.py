@@ -5294,10 +5294,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         ctk.CTkLabel(
             popup,
-            text="Download and install it automatically from inside the app.",
+            text="A product developed by Faysal Ahmmed.",
             font=ctk.CTkFont(size=14)
         ).pack(pady=(0, 8))
-
+        
         ctk.CTkLabel(
             popup,
             text=f"Package: {update_info['asset_name']}",
