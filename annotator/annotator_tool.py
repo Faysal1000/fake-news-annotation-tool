@@ -70,7 +70,6 @@ import random                        # For balanced kappa sample randomization
 import time                          # For background sync timers
 import re                            # For version number parsing
 import shlex                         # For safe POSIX updater script quoting
-import zipfile                       # For extracting macOS release archives
 import webbrowser                    # For opening heading searches in the default browser
 from urllib.parse import quote_plus  # For safely building Google search URLs
 
@@ -5506,13 +5505,17 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 shutil.rmtree(extract_dir)
             extract_dir.mkdir(parents=True, exist_ok=True)
 
-            with zipfile.ZipFile(download_path, "r") as archive:
-                archive.extractall(extract_dir)
+            unzip_cmd = "/usr/bin/unzip" if Path("/usr/bin/unzip").exists() else "unzip"
+            subprocess.run(
+                [unzip_cmd, "-q", "-o", str(download_path), "-d", str(extract_dir)],
+                check=True
+            )
 
             new_app_path = self._find_extracted_macos_app(extract_dir)
             if not new_app_path:
                 raise RuntimeError("The downloaded macOS archive did not contain a .app bundle.")
 
+            self._ensure_macos_app_executable(new_app_path)
             self._write_and_launch_posix_updater(new_app_path, download_path.parent)
         else:
             os.chmod(download_path, os.stat(download_path).st_mode | 0o755)
@@ -5531,6 +5534,18 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 return app_path
 
         return None
+
+    def _ensure_macos_app_executable(self, app_path):
+        """
+        Ensures the executable files inside a macOS .app bundle keep launch permissions.
+        """
+        macos_dir = app_path / "Contents" / "MacOS"
+        if not macos_dir.exists():
+            return
+
+        for item in macos_dir.iterdir():
+            if item.is_file():
+                os.chmod(item, os.stat(item).st_mode | 0o755)
 
     def _write_and_launch_windows_updater(self, new_file_path):
         """
