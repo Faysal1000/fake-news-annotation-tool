@@ -41,11 +41,16 @@ Go to the [**Releases**](../../releases/latest) page and download the file for y
 
    - **Alternative manual fix:** If you already downloaded the `.zip` through Safari/Chrome and extracted it, open **Terminal** and type:
      ```bash
-     xattr -cr
+     chmod -R +x 
+     ```
+     _(Make sure to include the space after `+x`)_
+   - **Drag and drop** the `FakeNewsAnnotator.app` icon into the Terminal window and press **Enter**. This restores the executable permissions.
+   - Next, type this to remove Apple's quarantine lock:
+     ```bash
+     xattr -cr 
      ```
      _(Make sure to include the space after `-cr`)_
-   - Then **drag and drop** the `FakeNewsAnnotator.app` icon directly into the Terminal window. It will automatically fill in the correct path.
-   - Press **Enter**. You can now double-click the app to open it normally!
+   - **Drag and drop** the app icon into the Terminal again and press **Enter**. You can now double-click the app to open it normally!
 
 4. **Windows users**:
    - You can download it directly from the browser, or open **Command Prompt** (cmd) and paste this to automatically create a `Fake News Dataset` folder on your Desktop and download it there:
