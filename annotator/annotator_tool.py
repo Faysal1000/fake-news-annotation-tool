@@ -3875,6 +3875,21 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                         ctk.CTkLabel(empty_frame, text="📭", font=ctk.CTkFont(size=60)).pack(pady=(0, 10))
                         ctk.CTkLabel(empty_frame, text="No Team Data Available", font=ctk.CTkFont(size=24, weight="bold"), text_color="#cdd6f4").pack(pady=(0, 5))
                         ctk.CTkLabel(empty_frame, text="Ensure Team Sync is configured, or choose an annotator with synced metrics.", font=ctk.CTkFont(size=14), text_color="#a6adc8").pack()
+                        
+                        last_err = getattr(self, 'last_sync_error', '')
+                        if last_err:
+                            ctk.CTkLabel(empty_frame, text=f"⚠️ Sync Failed: {last_err}", font=ctk.CTkFont(size=13, weight="bold"), text_color="#e74c3c").pack(pady=(10, 0))
+
+                        def force_manual_sync():
+                            self.last_sync_error = ""
+                            self.is_global_syncing = True
+                            self._queue_detailed_stats_redraw()
+                            threading.Thread(target=self._sync_global_metrics_worker, daemon=True).start()
+                            
+                        sync_btn = ctk.CTkButton(empty_frame, text="↻ Manual Sync", command=force_manual_sync,
+                                               width=120, height=32, font=ctk.CTkFont(size=13, weight="bold"),
+                                               fg_color="#3498db", hover_color="#2980b9")
+                        sync_btn.pack(pady=(15 if not last_err else 10, 0))
                     active_export_data = []
                     return
             else:
@@ -6594,12 +6609,14 @@ fi
             return
 
         sync_succeeded = False
+        self.last_sync_error = ""
         try:
             cfg = get_full_config()
             gist_id = cfg.get("gist_id")
             github_token = cfg.get("github_token")
 
             if not gist_id or not github_token:
+                self.last_sync_error = "Missing GitHub Gist ID or Token"
                 self.is_global_syncing = False
                 self._queue_detailed_stats_redraw()
                 return
@@ -6619,6 +6636,7 @@ fi
             # 1. Fetch current Gist
             resp = requests.get(f"https://api.github.com/gists/{gist_id}", headers=headers, timeout=10)
             if resp.status_code != 200:
+                self.last_sync_error = f"Fetch failed: HTTP {resp.status_code}"
                 print(f"[SYNC ERROR] Failed to fetch Gist: {resp.status_code}")
                 return
                 
@@ -6659,9 +6677,11 @@ fi
                     # Update local tracking again
                     self.global_metrics_data = dict(global_data)
                 else:
+                    self.last_sync_error = f"Upload failed: HTTP {patch_resp.status_code}"
                     print(f"[SYNC ERROR] Failed to update Gist: {patch_resp.status_code}")
                 
         except Exception as e:
+            self.last_sync_error = f"Network Error: {type(e).__name__}"
             print(f"[SYNC ERROR] Exception during sync: {e}")
         finally:
             self.is_global_syncing = False
