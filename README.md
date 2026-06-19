@@ -77,7 +77,7 @@ The `dataset.csv` file automatically records:
 
 - **Team Sync**: You can sync your local metrics to the cloud using a GitHub Gist so your entire team can view each other's progress in real-time. Setup instructions are inside the app's "Detailed Stats -> Team Sync" menu.
 - **Inter-Rater Reliability (Kappa Testing)**: You can extract a balanced random sample of records from your master `dataset.csv` right from the tool's **Scripts** menu. Distribute this sample to your team for blind re-labeling, and calculate the Kappa score automatically.
-- **Telegram Bot Integration**: This project includes a built-in Telegram bot (located in the `bot-server/` directory) to easily route news links to assigned annotators. See the bot directory for setup details.
+- **Telegram Bot Integration**: This project includes a built-in Telegram bot (located in the `bot-server/` directory) to easily route news links to assigned annotators. See the bot directory for setup details. 
 
 ---
 
