@@ -1,0 +1,16 @@
+#!/bin/bash
+# Check if a tag is being pushed
+while read local_ref local_sha remote_ref remote_sha; do
+    if [[ $remote_ref == refs/tags/* ]]; then
+        TAG_NAME=${remote_ref#refs/tags/}
+        # Pure bash/grep to extract version (no Python needed)
+        VERSION_JSON=$(grep -o '"version": *"[^"]*"' annotator/version.json | cut -d '"' -f 4)
+        
+        if [ "$TAG_NAME" != "$VERSION_JSON" ]; then
+            echo "🛑 ERROR: You are pushing tag '$TAG_NAME', but annotator/version.json says '$VERSION_JSON'."
+            echo "Please update version.json to match the tag before pushing!"
+            exit 1
+        fi
+    fi
+done
+exit 0

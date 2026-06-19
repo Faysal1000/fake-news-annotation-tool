@@ -288,7 +288,12 @@ Once all annotators have completed their reviews on the same file:
 ```bash
 # Clone the repository
 git clone https://github.com/Faysal1000/fake-news-annotation-tool.git
-cd fake-news-annotation-tool/annotator
+cd fake-news-annotation-tool
+
+# Enable local Git hooks (prevents pushing mismatched version tags)
+git config core.hooksPath .githooks
+
+cd annotator
 
 # Install dependencies
 pip install -r requirements.txt
