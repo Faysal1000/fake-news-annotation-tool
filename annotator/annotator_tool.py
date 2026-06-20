@@ -5570,6 +5570,15 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         script_path = new_file_path.parent / "updater.bat"
         backup_path = target_path.with_suffix(target_path.suffix + ".old")
 
+        # Handle existing hidden updater script to avoid PermissionError on Windows
+        if script_path.exists():
+            try:
+                if platform.system() == "Windows":
+                    subprocess.run(["attrib", "-h", "-r", "-s", str(script_path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+                script_path.unlink()
+            except Exception:
+                pass
+
         script = f"""@echo off
 setlocal enabledelayedexpansion
 set "TARGET={target_path}"
