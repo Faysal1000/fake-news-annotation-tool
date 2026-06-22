@@ -7793,10 +7793,11 @@ fi
         if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
             messagebox.showinfo("Analysis in Progress", "Duplicate scan is currently running in the background. Please wait until it completes.")
             return
-            
-        if not hasattr(self, '_duplicate_pairs_cache') or not self._duplicate_pairs_cache:
-            messagebox.showinfo("Duplicate Audit", "No potential duplicates found in the dataset.")
-            return
+        # If not computed yet, initialize to empty
+        if not hasattr(self, '_duplicate_pairs_cache'):
+            self._duplicate_pairs_cache = []
+        if not hasattr(self, '_raw_duplicate_pairs_cache'):
+            self._raw_duplicate_pairs_cache = []
             
         popup = ctk.CTkToplevel(self)
         popup.title("Global Duplicate Audit")
@@ -7904,6 +7905,17 @@ fi
         start_idx = page * PAGE_SIZE
         end_idx = min(start_idx + PAGE_SIZE, len(cache_to_show))
         display_list = cache_to_show[start_idx:end_idx]
+        
+        if not display_list:
+            empty_msg = "No duplicates found at the current threshold."
+            if not show_marked_var.get() and len(self._raw_duplicate_pairs_cache) > 0:
+                empty_msg = "All duplicates have been marked as Non-Duplicate.\nCheck 'Show Marked' to view them."
+                
+            ctk.CTkLabel(
+                scroll_frame, text=empty_msg,
+                font=ctk.CTkFont(size=14, slant="italic"),
+                text_color="#888"
+            ).pack(pady=40)
         
         for pair in display_list:
             idx_a = pair["idx_a"]
