@@ -142,7 +142,7 @@ class AnnotateModeMixin:
 
         if errors:
             messagebox.showerror("Validation Error", "\n".join(errors))
-            return
+            return False
 
         # Check duplicates in Annotate Mode on Save
         if self.current_mode == "annotate":
@@ -155,9 +155,9 @@ class AnnotateModeMixin:
                         category, multi_cat, confidence, has_image, has_media
                     )
                 )
-                return
+                return False
 
-        self._proceed_with_save(
+        return self._proceed_with_save(
             annotator, label, heading, text, source, source_category,
             category, multi_cat, confidence, has_image, has_media
         )
@@ -174,7 +174,7 @@ class AnnotateModeMixin:
                 f"The text has only {len(text.split())} word(s). Are you sure you want to save?"
             )
             if not proceed:
-                return
+                return False
 
         # Generate unique database entry ID
         entry_id = generate_id()
@@ -242,7 +242,7 @@ class AnnotateModeMixin:
                 })
         except Exception as e:
             messagebox.showerror("Save Error", f"Failed to save data. Please check if the dataset file is currently locked.\n\nError: {e}")
-            return
+            return False
 
         save_config(annotator)
         self.status_label.configure(text=f"Entry saved successfully!", text_color="#2ecc71")
@@ -273,6 +273,7 @@ class AnnotateModeMixin:
         self._update_stats()
         self._clear_fields()
         messagebox.showinfo("Save Complete", f"Entry saved successfully!\nID: {entry_id}")
+        return True
 
     def _clear_fields(self):
         """
