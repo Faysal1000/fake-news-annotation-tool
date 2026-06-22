@@ -69,6 +69,7 @@ import platform                      # For OS detection
 import random                        # For balanced kappa sample randomization
 import time                          # For background sync timers
 import re                            # For version number parsing
+import difflib                       # For sequence-based similarity matching
 import shlex                         # For safe POSIX updater script quoting
 import webbrowser                    # For opening heading searches in the default browser
 from urllib.parse import quote_plus  # For safely building Google search URLs
@@ -396,6 +397,123 @@ def sanitize_name(name):
     """
     return "".join(c if c.isalnum() else "_" for c in name.strip())
 
+def clean_text(text):
+    """
+    Cleans Bengali and English text by converting to lowercase, 
+    removing punctuation (including Bengali danda '।'), and splitting into words.
+    """
+    if not text:
+        return []
+    # Replace punctuation characters with spaces
+    cleaned = re.sub(r'[।\.,\?!\(\)\"\'\-\:\;\@\#\$\%\^\&\*\_\+\[\]\{\}\<\>\/\\\|`~]', ' ', text.lower())
+    # Split by whitespace to get words
+    return [word for word in cleaned.split() if word]
+
+def calculate_jaccard_similarity(text1, text2):
+    """
+    Calculates the Jaccard similarity of two texts based on word sets.
+    Returns a float between 0.0 and 1.0.
+    """
+    words1 = set(clean_text(text1))
+    words2 = set(clean_text(text2))
+    if not words1 and not words2:
+        return 1.0
+    if not words1 or not words2:
+        return 0.0
+    return len(words1.intersection(words2)) / len(words1.union(words2))
+
+def calculate_heading_similarity(head1, head2):
+    """
+    Calculates heading similarity using a combination of difflib SequenceMatcher 
+    and Jaccard similarity.
+    """
+    h1 = (head1 or "").strip().lower()
+    h2 = (head2 or "").strip().lower()
+    if not h1 and not h2:
+        return 1.0
+    if not h1 or not h2:
+        return 0.0
+    ratio = difflib.SequenceMatcher(None, h1, h2).ratio()
+    jaccard = calculate_jaccard_similarity(h1, h2)
+    return max(ratio, jaccard)
+
+def get_words_with_positions(text):
+    """
+    Splits text into words and returns a list of dicts with word, start, and end char positions.
+    """
+    if not text:
+        return []
+    # Match any alphanumeric sequence, ignoring standard punctuation symbols.
+    pattern = r'[^\s।\.,\?!\(\)\"\'\-\:\;\@\#\$\%\^\&\*\_\+\[\]\{\}\<\>\/\\\|`~]+'
+    words = []
+    for match in re.finditer(pattern, text):
+        words.append({
+            'word': match.group(0).lower(),
+            'start': match.start(),
+            'end': match.end()
+        })
+    return words
+
+def calculate_containment_similarity(text_a, text_b):
+    """What fraction of text_a's words appear in text_b?"""
+    words_a = set(clean_text(text_a))
+    words_b = set(clean_text(text_b))
+    if not words_a:
+        return 0.0
+    return len(words_a.intersection(words_b)) / len(words_a)
+
+def find_matching_word_ranges(new_text, existing_text, n=4):
+    """
+    Finds character ranges in existing_text that match new_text using n-gram shingles.
+    Returns a list of tuples (start_char, end_char).
+    """
+    words_new = [w['word'] for w in get_words_with_positions(new_text)]
+    words_existing = get_words_with_positions(existing_text)
+    
+    if not words_new or not words_existing:
+        return []
+    
+    # Adaptive shingle size if either text is shorter than n
+    actual_n = min(n, len(words_new), len(words_existing))
+    if actual_n <= 0:
+        return []
+        
+    # Build shingles for new_text
+    shingles_new = set()
+    for i in range(len(words_new) - actual_n + 1):
+        shingles_new.add(tuple(words_new[i:i+actual_n]))
+        
+    # Track which word indices in existing_text are matched
+    matched_indices = set()
+    for i in range(len(words_existing) - actual_n + 1):
+        shingle = tuple(words_existing[i+k]['word'] for k in range(actual_n))
+        if shingle in shingles_new:
+            for k in range(actual_n):
+                matched_indices.add(i + k)
+                
+    if not matched_indices:
+        return []
+        
+    # Group consecutive matched word indices into character ranges
+    ranges = []
+    sorted_indices = sorted(list(matched_indices))
+    
+    current_start = words_existing[sorted_indices[0]]['start']
+    current_end = words_existing[sorted_indices[0]]['end']
+    
+    for idx in sorted_indices[1:]:
+        word_info = words_existing[idx]
+        if word_info['start'] <= current_end + 3:  # allow small gap (punctuation/space)
+            current_end = word_info['end']
+        else:
+            ranges.append((current_start, current_end))
+            current_start = word_info['start']
+            current_end = word_info['end']
+            
+    ranges.append((current_start, current_end))
+    return ranges
+
+
 # SCRIPT LOGIC (inlined so the bundled app works without separate script files)
 
 def _aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, output_videos_dir):
@@ -421,6 +539,7 @@ def _aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outp
 
     fieldnames = list(CSV_COLUMNS)
     all_rows = []
+    all_non_dups = set()
     total_images_copied = 0
     total_videos_copied = 0
 
@@ -429,6 +548,15 @@ def _aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outp
         csv_path = os.path.join(annotator_dir, "dataset.csv")
         images_dir = os.path.join(annotator_dir, "images")
         videos_dir = os.path.join(annotator_dir, "videos")
+        non_dups_path = os.path.join(annotator_dir, "non_duplicates.json")
+
+        if os.path.isfile(non_dups_path):
+            try:
+                import json
+                with open(non_dups_path, "r", encoding="utf-8") as f:
+                    all_non_dups.update(json.load(f))
+            except Exception as e:
+                print(f"Error reading {non_dups_path}: {e}")
 
         if os.path.isdir(images_dir):
             for img_file in os.listdir(images_dir):
@@ -465,6 +593,15 @@ def _aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outp
         writer.writeheader()
         for row in all_rows:
             writer.writerow(row)
+            
+    if all_non_dups:
+        output_non_dups_path = os.path.join(os.path.dirname(output_csv_path), "non_duplicates.json")
+        try:
+            import json
+            with open(output_non_dups_path, "w", encoding="utf-8") as f:
+                json.dump(list(all_non_dups), f)
+        except Exception as e:
+            print(f"Error saving aggregated non_duplicates.json: {e}")
 
     return (
         f"Aggregation complete!\n\n"
@@ -1173,9 +1310,41 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.left_col = ctk.CTkFrame(self.content_container, fg_color="transparent")
 
         # Heading entry field
-        heading_header = self._section(self.left_col, "News Heading (optional)")
+        self.heading_header = self._section(self.left_col, "News Heading (optional)")
+        self.heading_dup_badge = ctk.CTkFrame(
+            self.heading_header,
+            fg_color="#3d2b0f",
+            corner_radius=6,
+            border_width=1,
+            border_color="#f39c12",
+            cursor="hand2"
+        )
+        self.heading_dup_text = ctk.CTkLabel(
+            self.heading_dup_badge,
+            text="",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color="#f39c12"
+        )
+        self.heading_dup_text.pack(padx=8, pady=3)
+        
+        # Hover effect bindings
+        def on_enter_badge(e):
+            self.heading_dup_badge.configure(fg_color="#523a15")
+        def on_leave_badge(e):
+            self.heading_dup_badge.configure(fg_color="#3d2b0f")
+            
+        self.heading_dup_badge.bind("<Enter>", on_enter_badge)
+        self.heading_dup_badge.bind("<Leave>", on_leave_badge)
+        self.heading_dup_text.bind("<Enter>", on_enter_badge)
+        self.heading_dup_text.bind("<Leave>", on_leave_badge)
+        
+        # Click bindings to trigger review duplicates popup
+        self.heading_dup_badge.bind("<Button-1>", lambda e: self._show_review_duplicates())
+        self.heading_dup_text.bind("<Button-1>", lambda e: self._show_review_duplicates())
+
+        
         self.heading_search_btn = ctk.CTkButton(
-            heading_header,
+            self.heading_header,
             text="🔎 Search",
             command=self._open_heading_search,
             width=84,
@@ -1190,13 +1359,14 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.heading_entry = ctk.CTkTextbox(self.left_col, height=55, font=ctk.CTkFont(size=13),
                                             border_width=1, border_color="#555", undo=True)
         self.heading_entry.pack(fill="x", padx=10, pady=(0, 6))
-        self.heading_entry.bind("<KeyRelease>", self._update_heading_search_visibility)
+        self.heading_entry.bind("<KeyRelease>", self._on_heading_key_release)
 
         # Article text entry field
         self._section(self.left_col, "📝 News Text (required if no image)")
         self.text_box = ctk.CTkTextbox(self.left_col, height=120, font=ctk.CTkFont(size=13),
                                         border_width=1, border_color="#555", undo=True)
         self.text_box.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+        self.text_box.bind("<KeyRelease>", self._on_text_key_release)
 
         # Upload / Pasting controls
         self._section(self.left_col, "🖼️ Images & Video (required if no text)")
@@ -2054,6 +2224,25 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             messagebox.showerror("Validation Error", "\n".join(errors))
             return
 
+        # Check duplicates in Annotate Mode on Save
+        if self.current_mode == "annotate":
+            matches = self._check_duplicates_for_saving(heading, text)
+            if matches:
+                self._show_duplicate_save_warning(
+                    matches,
+                    lambda: self._proceed_with_save(
+                        annotator, label, heading, text, source, source_category,
+                        category, multi_cat, confidence, has_image, has_media
+                    )
+                )
+                return
+
+        self._proceed_with_save(
+            annotator, label, heading, text, source, source_category,
+            category, multi_cat, confidence, has_image, has_media
+        )
+
+    def _proceed_with_save(self, annotator, label, heading, text, source, source_category, category, multi_cat, confidence, has_image, has_media):
         # Automatically map Real news classification subtype to Real
         if label == "Real":
             multi_cat = "Real"
@@ -2127,7 +2316,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                     "source_category": source_category,
                     "category": category,
                     "annotator": annotator,
-                    "annotation_confidence": confidence,
+                    "annotation_confidence": str(confidence),
                     "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
                     "timestamp": datetime.now().isoformat(),
                 })
@@ -2160,6 +2349,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.confidence_entry.delete(0, "end")      
         self.confidence_entry.insert(0, "100")      
         self._update_heading_search_visibility()
+        self._hide_duplicate_warnings()
 
     def _clear_all(self):
         """
@@ -3464,6 +3654,26 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             self._create_stat_badge(self.stats_frame, "Satire", sub["Satire"], "#9b59b6")
         if not use_filtered or sub["Clickbait"] > 0:
             self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
+            
+        # Duplicate audit badge (only in Review mode)
+        if self.current_mode == "review":
+            if not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None:
+                self._compute_global_duplicates()
+                
+            if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+                dup_count = "..."
+            else:
+                unique_records_with_dups = set()
+                for pair in self._duplicate_pairs_cache:
+                    unique_records_with_dups.add(pair["idx_a"])
+                    unique_records_with_dups.add(pair["idx_b"])
+                dup_count = len(unique_records_with_dups)
+                
+            self._create_clickable_stat_badge(
+                self.stats_frame, "Duplicates", dup_count, "#e67e22",
+                command=self._show_global_duplicate_audit
+            )
+
         
         # Create a "See More" badge-style button
         see_more_badge = ctk.CTkFrame(
@@ -4433,8 +4643,14 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         Reads rows from dataset.csv, converting them into dictionaries, and then 
         applies the advanced checklist/filter criteria to populate the active subset.
         """
+        # Reset duplicate scan cache and cancel background computations
+        if hasattr(self, '_duplicate_computing'):
+            self._duplicate_computing = False
+        self._duplicate_pairs_cache = None
+
         # Reset the master records container list
         self.all_dataset_records = []
+
         
         # If the dataset CSV does not exist or is empty, initialize empty lists and return
         if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
@@ -4566,6 +4782,137 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Render the image previews and trigger placeholder graphics for missing files
         self._refresh_previews()
 
+        # Update the duplicate audit link in Review Mode
+        if self.current_mode == "review":
+            self._update_review_mode_duplicate_count()
+
+    def _custom_ask_yes_no_cancel(self, title, message):
+        popup = ctk.CTkToplevel(self)
+        popup.title(title)
+        w, h = 480, 240
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        popup.transient(self)
+        
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        popup.grab_set()
+        
+        result = [None]
+        
+        def set_res(val):
+            result[0] = val
+            popup.grab_release()
+            popup.destroy()
+            
+        ctk.CTkLabel(
+            popup, text=title,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#f39c12"
+        ).pack(pady=(20, 10))
+        
+        ctk.CTkLabel(
+            popup, text=message,
+            font=ctk.CTkFont(size=14),
+            text_color="#ecf0f1",
+            justify="center",
+            wraplength=420
+        ).pack(pady=(0, 25), padx=20)
+        
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(0, 20))
+        
+        btn_inner = ctk.CTkFrame(btn_frame, fg_color="transparent")
+        btn_inner.pack(anchor="center")
+        
+        ctk.CTkButton(
+            btn_inner, text="💾 Save", width=110, height=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#27ae60", hover_color="#2ecc71",
+            command=lambda: set_res(True)
+        ).pack(side="left", padx=8)
+        
+        ctk.CTkButton(
+            btn_inner, text="🗑️ Discard", width=110, height=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#c0392b", hover_color="#e74c3c",
+            command=lambda: set_res(False)
+        ).pack(side="left", padx=8)
+        
+        ctk.CTkButton(
+            btn_inner, text="❌ Cancel", width=110, height=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#34495e", hover_color="#2c3e50",
+            command=lambda: set_res(None)
+        ).pack(side="left", padx=8)
+        
+        popup.protocol("WM_DELETE_WINDOW", lambda: set_res(None))
+        self.wait_window(popup)
+        return result[0]
+
+    def _custom_ask_yes_no(self, title, message):
+        popup = ctk.CTkToplevel(self)
+        popup.title(title)
+        w, h = 480, 240
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        popup.transient(self)
+        
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        popup.grab_set()
+        
+        result = [False]
+        
+        def set_res(val):
+            result[0] = val
+            popup.grab_release()
+            popup.destroy()
+            
+        ctk.CTkLabel(
+            popup, text=title,
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#f39c12"
+        ).pack(pady=(20, 10))
+        
+        ctk.CTkLabel(
+            popup, text=message,
+            font=ctk.CTkFont(size=14),
+            text_color="#ecf0f1",
+            justify="center",
+            wraplength=420
+        ).pack(pady=(0, 25), padx=20)
+        
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", pady=(0, 20))
+        
+        btn_inner = ctk.CTkFrame(btn_frame, fg_color="transparent")
+        btn_inner.pack(anchor="center")
+        
+        ctk.CTkButton(
+            btn_inner, text="✅ Yes", width=130, height=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#27ae60", hover_color="#2ecc71",
+            command=lambda: set_res(True)
+        ).pack(side="left", padx=15)
+        
+        ctk.CTkButton(
+            btn_inner, text="❌ No", width=130, height=34,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            fg_color="#c0392b", hover_color="#e74c3c",
+            command=lambda: set_res(False)
+        ).pack(side="left", padx=15)
+        
+        popup.protocol("WM_DELETE_WINDOW", lambda: set_res(False))
+        self.wait_window(popup)
+        return result[0]
+
     def _check_unsaved_annotate_changes(self):
         """
         Checks for any unsaved changes when leaving Annotate mode.
@@ -4599,10 +4946,11 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         # If changes are detected, prompt the user with a decision dialog box
         if changed:
-            ans = messagebox.askyesnocancel("Unsaved Entry",
+            ans = self._custom_ask_yes_no_cancel(
+                "Unsaved Entry",
                 "You have started an annotation but haven't saved it.\n\n"
-                "Do you want to save it now?\n"
-                "(Yes = Save, No = Discard, Cancel = Stay)")
+                "Do you want to save it now?"
+            )
             
             # Action A: User clicked 'Cancel' (stay on the current page and abort mode toggle)
             if ans is None:
@@ -4713,7 +5061,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             return True
             
         # Prompt user with an action selection dialog for unsaved review edits
-        response = messagebox.askyesnocancel(
+        response = self._custom_ask_yes_no_cancel(
             "Unsaved Changes",
             "You have unsaved changes in this record.\n\n"
             "Do you want to save them before moving?"
@@ -4726,7 +5074,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             if not save_ok:
                 # If save fails due to validation errors, offer a fallback to discard changes
                 # to prevent the user from being trapped in an infinite error loop.
-                discard = messagebox.askyesno(
+                discard = self._custom_ask_yes_no(
                     "Save Failed",
                     "Could not save due to validation errors.\n\n"
                     "Do you want to discard your changes and continue?"
@@ -5041,7 +5389,13 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         """
         Rewrites the entire dataset CSV file from the general records database list.
         """
+        # Invalidate global duplicates cache since the dataset content has changed
+        if hasattr(self, '_duplicate_computing'):
+            self._duplicate_computing = False
+        self._duplicate_pairs_cache = None
+
         # Open CSV file with standard settings: newline protection and utf-8 encoding support
+
         with open(CSV_PATH, "w", newline="", encoding="utf-8") as f:
             # Construct standard writer, ignoring extra unexpected keys in record dictionaries
             writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
@@ -6366,7 +6720,7 @@ fi
             return True
 
         # Prompt the user with a standard confirmation dialog
-        response = messagebox.askyesnocancel(
+        response = self._custom_ask_yes_no_cancel(
             "Unsaved Changes",
             "You have unsaved changes in this record.\n\n"
             "Do you want to save them before moving?"
@@ -6378,7 +6732,7 @@ fi
             save_ok = self._save_kappa_decision(auto_advance=False)
             if not save_ok:
                 # If validation fails, ask the user if they wish to discard changes to proceed
-                discard = messagebox.askyesno(
+                discard = self._custom_ask_yes_no(
                     "Save Failed",
                     "Could not save due to validation errors.\n\n"
                     "Do you want to discard your changes and continue?"
@@ -6816,6 +7170,1453 @@ fi
         
         del_btn = ctk.CTkButton(btn_frame, text="Disconnect", command=delete_creds, height=35, fg_color="#e74c3c", hover_color="#c0392b")
         del_btn.pack(side="left", fill="x", expand=True)
+
+    def _on_heading_key_release(self, event=None):
+        self._update_heading_search_visibility(event)
+        if self.current_mode == "review":
+            self._schedule_review_dup_check(event)
+
+    def _on_text_key_release(self, event=None):
+        if self.current_mode == "review":
+            self._schedule_review_dup_check(event)
+
+    def _schedule_review_dup_check(self, event=None):
+        """
+        Schedules a duplicate count update in Review Mode.
+        """
+        if self.current_mode != "review":
+            return
+        if hasattr(self, "_review_dup_timer") and self._review_dup_timer:
+            self.after_cancel(self._review_dup_timer)
+        self._review_dup_timer = self.after(400, self._update_review_mode_duplicate_count)
+
+    def _hide_duplicate_warnings(self):
+        """
+        Hides any duplicate warnings / hyperlink text in the UI.
+        """
+        if hasattr(self, "heading_dup_badge") and self.heading_dup_badge:
+            self.heading_dup_badge.pack_forget()
+
+    def _get_all_records_for_dup_check(self):
+        """
+        Retrieves all records from dataset.csv for duplicate verification.
+        Uses in-memory records if already loaded, otherwise reads from file.
+        """
+        if self.all_dataset_records:
+            return self.all_dataset_records
+            
+        records = []
+        if CSV_PATH.exists() and CSV_PATH.stat().st_size > 0:
+            try:
+                with open(CSV_PATH, "r", newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        records.append(row)
+            except Exception as e:
+                print(f"[WARNING] Failed to read dataset.csv for duplicate check: {e}")
+        return records
+
+    def _check_duplicates_for_saving(self, current_heading, current_text, exclude_id=None):
+        """
+        Compares heading/text against all existing database records to find duplicates.
+        Combines heading + text into a single blob so cross-field matches are caught
+        (e.g. heading content appearing in the other record's text).
+        Returns a sorted list of matches with similarity scores >= 0.50 (50%).
+        """
+        records = self._get_all_records_for_dup_check()
+        if not records:
+            return []
+        
+        # Build combined blob for the current entry
+        current_combined = f"{current_heading or ''} {current_text or ''}".strip()
+        if not current_combined:
+            return []
+            
+        matches = []
+        for idx, rec in enumerate(records):
+            rec_id = rec.get("id")
+            if exclude_id and rec_id == exclude_id:
+                continue
+                
+            rec_heading = rec.get("heading", "")
+            rec_text = rec.get("text", "")
+            rec_combined = f"{rec_heading} {rec_text}".strip()
+            
+            if not rec_combined:
+                continue
+            
+            # Heading similarity (heading-to-heading)
+            heading_sim = 0.0
+            if current_heading and rec_heading:
+                heading_sim = calculate_heading_similarity(current_heading, rec_heading)
+                
+            # Text similarity (text-to-text)
+            text_sim = 0.0
+            if current_text and rec_text:
+                text_jaccard = calculate_jaccard_similarity(current_text, rec_text)
+                text_containment = calculate_containment_similarity(current_text, rec_text)
+                text_sim = max(text_jaccard, text_containment)
+                
+            # Combined similarity (head+body with head+body)
+            combined_jaccard = calculate_jaccard_similarity(current_combined, rec_combined)
+            combined_containment = 0.0
+            words_i_comb = set(clean_text(current_combined))
+            words_j_comb = set(clean_text(rec_combined))
+            if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
+                combined_containment = calculate_containment_similarity(current_combined, rec_combined)
+            combined_sim = max(combined_jaccard, combined_containment)
+            max_sim = max(combined_sim, heading_sim, text_sim)
+            
+            # The duplicate threshold is triggered if overall similarity (max of combined, heading, text) is >= dynamic threshold
+            threshold = self._get_duplicate_threshold() / 100.0
+            if max_sim >= threshold:
+                matches.append({
+                    "row_num": idx + 1,
+                    "record": rec,
+                    "similarity": max_sim,
+                    "combined_sim": combined_sim,
+                    "heading_sim": heading_sim,
+                    "text_sim": text_sim,
+                    "new_heading_ref": current_heading,
+                    "new_text_ref": current_text
+                })
+                
+        matches.sort(key=lambda x: x["similarity"], reverse=True)
+        return matches
+
+    def _update_review_mode_duplicate_count(self):
+        """
+        Audits the current record in Review Mode against other records for duplicates.
+        If duplicates exist, shows the clickable warning text next to the heading label.
+        Calculates in the background using self.after to avoid freezing the UI.
+        """
+        if self.current_mode != "review" or not self.dataset_records:
+            self._hide_duplicate_warnings()
+            return
+            
+        record = self.dataset_records[self.current_review_index]
+        current_id = record.get("id")
+        current_heading = self._get_heading_text()
+        current_text = self.text_box.get("1.0", "end-1c").strip()
+        
+        # We only check if heading or text is populated
+        if not current_heading.strip() and not current_text.strip():
+            self._hide_duplicate_warnings()
+            return
+
+        # Show calculating state immediately
+        self.heading_dup_text.configure(text="⚠️ Calculating duplicates...")
+        self.heading_dup_badge.pack(side="left", padx=(8, 0))
+        
+        # Reset current record matches
+        self._current_record_matches = []
+        
+        # Set up check ID to track this specific request
+        self._current_review_dup_check_id = getattr(self, '_current_review_dup_check_id', 0) + 1
+        check_id = self._current_review_dup_check_id
+        
+        records = self._get_all_records_for_dup_check()
+        if not records:
+            self._hide_duplicate_warnings()
+            return
+            
+        # Start asynchronous batch comparisons
+        self.after(5, lambda: self._process_review_dup_batch(
+            check_id=check_id,
+            records=records,
+            current_heading=current_heading,
+            current_text=current_text,
+            current_id=current_id,
+            matches=[],
+            start_idx=0
+        ))
+
+    def _process_review_dup_batch(self, check_id, records, current_heading, current_text, current_id, matches, start_idx):
+        # If user has moved to another record, abort this stale calculation
+        if getattr(self, '_current_review_dup_check_id', 0) != check_id:
+            return
+            
+        n_records = len(records)
+        if start_idx >= n_records:
+            # Done!
+            matches.sort(key=lambda x: x["similarity"], reverse=True)
+            self._current_record_matches = matches
+            count = len(matches)
+            if count > 0:
+                self.heading_dup_text.configure(
+                    text=f"⚠️ {count} Duplicate{'s' if count > 1 else ''} · View ▸"
+                )
+                self.heading_dup_badge.pack(side="left", padx=(8, 0))
+            else:
+                self.heading_dup_badge.pack_forget()
+            return
+            
+        # Process in batches of 20 records
+        batch_size = 20
+        end_idx = min(start_idx + batch_size, n_records)
+        
+        # Precompute current sets
+        words_i_h = set(clean_text(current_heading))
+        words_i_text = set(clean_text(current_text))
+        current_combined = f"{current_heading or ''} {current_text or ''}".strip()
+        words_i_comb = words_i_h.union(words_i_text)
+        
+        for idx in range(start_idx, end_idx):
+            rec = records[idx]
+            rec_id = rec.get("id")
+            if current_id and rec_id == current_id:
+                continue
+                
+            rec_heading = rec.get("heading", "")
+            rec_text = rec.get("text", "")
+            rec_combined = f"{rec_heading} {rec_text}".strip()
+            
+            if not rec_combined:
+                continue
+                
+            words_j_h = set(clean_text(rec_heading))
+            words_j_text = set(clean_text(rec_text))
+            words_j_comb = words_j_h.union(words_j_text)
+            
+            # Heading similarity (heading-to-heading)
+            heading_sim = 0.0
+            if current_heading and rec_heading:
+                # SequenceMatcher is slow, only do it if they share words or are short
+                if len(words_i_h.intersection(words_j_h)) > 0 or len(current_heading) < 20 or len(rec_heading) < 20:
+                    heading_sim = calculate_heading_similarity(current_heading, rec_heading)
+                    
+            # Text similarity (text-to-text)
+            text_sim = 0.0
+            if current_text and rec_text:
+                text_jaccard = len(words_i_text.intersection(words_j_text)) / len(words_i_text.union(words_j_text)) if words_i_text or words_j_text else 0.0
+                text_containment = len(words_i_text.intersection(words_j_text)) / len(words_i_text) if words_i_text else 0.0
+                text_sim = max(text_jaccard, text_containment)
+                
+            # Combined similarity (head+body with head+body)
+            intersection_len = len(words_i_comb.intersection(words_j_comb))
+            union_len = len(words_i_comb.union(words_j_comb))
+            combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
+            
+            combined_containment = 0.0
+            if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
+                containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
+                containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
+                combined_containment = max(containment_i_j, containment_j_i)
+                
+            combined_sim = max(combined_jaccard, combined_containment)
+            
+            max_sim = max(combined_sim, heading_sim, text_sim)
+            threshold = self._get_duplicate_threshold() / 100.0
+            if max_sim >= threshold:
+                matches.append({
+                    "row_num": idx + 1,
+                    "record": rec,
+                    "similarity": max_sim,
+                    "combined_sim": combined_sim,
+                    "heading_sim": heading_sim,
+                    "text_sim": text_sim,
+                    "new_heading_ref": current_heading,
+                    "new_text_ref": current_text
+                })
+                
+        # Schedule next batch
+        self.after(5, lambda: self._process_review_dup_batch(
+            check_id=check_id,
+            records=records,
+            current_heading=current_heading,
+            current_text=current_text,
+            current_id=current_id,
+            matches=matches,
+            start_idx=end_idx
+        ))
+
+
+    def _show_review_duplicates(self):
+        """
+        Opens a popup dialog showing the list of potential duplicates in Review Mode.
+        """
+        if self.current_mode != "review" or not self.dataset_records:
+            return
+            
+        matches = getattr(self, '_current_record_matches', [])
+        if not matches:
+            messagebox.showinfo("Duplicate Verification", "Duplicate calculation is still running in the background or no duplicates exist.")
+            return
+            
+        popup = ctk.CTkToplevel(self)
+        popup.title(f"Possible Duplications - Instance #{self.current_review_index + 1}")
+        w, h = 800, 500
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        # Center on screen
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        # Header
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=50, corner_radius=0)
+        header_frame.pack(fill="x", side="top")
+        
+        ctk.CTkLabel(
+            header_frame,
+            text=f"⚠️ Duplicates Found for Record #{self.current_review_index + 1}",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#f39c12"
+        ).pack(pady=10, padx=20)
+        
+        # Scrollable list of matches
+        scroll_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        for match in matches:
+            row_num = match["row_num"]
+            sim = match["similarity"]
+            combined_sim = match.get("combined_sim", 0)
+            heading_sim = match.get("heading_sim", 0)
+            
+            sim_pct = int(sim * 100)
+            
+            # -- Card row --
+            row_frame = ctk.CTkFrame(scroll_frame, fg_color="#2b2b36", corner_radius=8,
+                                      border_width=1, border_color="#444")
+            row_frame.pack(fill="x", pady=4, ipady=6)
+            
+            # Instance number badge
+            badge_color = "#e74c3c" if sim_pct >= 80 else ("#f39c12" if sim_pct >= 60 else "#3498db")
+            badge = ctk.CTkLabel(
+                row_frame, text=f" #{row_num} ",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color=badge_color, corner_radius=6,
+                text_color="white", width=50
+            )
+            badge.pack(side="left", padx=(10, 8), pady=6)
+            
+            # Match info text
+            text_sim = match.get("text_sim", 0.0)
+            info_text = f"{sim_pct}% match  ·  Head+Body: {int(combined_sim*100)}%  ·  Heading: {int(heading_sim*100)}%  ·  Text: {int(text_sim*100)}%"
+            ctk.CTkLabel(
+                row_frame, text=info_text,
+                font=ctk.CTkFont(size=12),
+                text_color="#ccc", anchor="w"
+            ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+            
+            # Inspect button
+            ctk.CTkButton(
+                row_frame, text="🔍 Inspect", width=90, height=28,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                fg_color="#6c5ce7", hover_color="#5a4bd1",
+                corner_radius=6,
+                command=lambda m=match: self._view_duplicate_details(m)
+            ).pack(side="right", padx=(0, 10), pady=6)
+            
+        # Close Button (centered)
+        ctk.CTkButton(
+            popup,
+            text="Close",
+            width=120,
+            command=popup.destroy,
+            fg_color="#34495e",
+            hover_color="#2c3e50"
+        ).pack(pady=(0, 15))
+
+    def _create_clickable_stat_badge(self, parent, label, count, dot_color="#888", command=None):
+        """
+        Creates a clickable visually stylized metric badge/card inside the stats bar.
+        Supports hover styling, hand2 cursor, and bindings to click event.
+        """
+        badge = ctk.CTkFrame(parent, fg_color="#1e1e3a", corner_radius=8,
+                              border_width=1, border_color="#333", cursor="hand2")
+        
+        inner = ctk.CTkFrame(badge, fg_color="transparent")
+        inner.pack(padx=10, pady=6)
+        
+        dot = ctk.CTkFrame(inner, width=10, height=10, corner_radius=5,
+                            fg_color=dot_color)
+        dot.pack(side="left", padx=(0, 6))
+        dot.pack_propagate(False)
+        
+        count_lbl = ctk.CTkLabel(inner, text=str(count),
+                                 font=ctk.CTkFont(size=16, weight="bold"),
+                                 text_color="#ffffff")
+        count_lbl.pack(side="left", padx=(0, 6))
+        
+        text_lbl = ctk.CTkLabel(inner, text=label,
+                                font=ctk.CTkFont(size=11),
+                                text_color="#aaa")
+        text_lbl.pack(side="left")
+        
+        # Hover effect
+        def on_enter(e):
+            badge.configure(fg_color="#2c2c54")
+        def on_leave(e):
+            badge.configure(fg_color="#1e1e3a")
+            
+        widgets = [badge, inner, dot, count_lbl, text_lbl]
+        for w in widgets:
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+            if command:
+                w.bind("<Button-1>", lambda e: command())
+                
+        return badge
+
+    def _compute_global_duplicates(self):
+        """
+        Computes all duplicate pairs in the dataset in a true background thread.
+        Stores results in self._duplicate_pairs_cache and safely updates UI when done.
+        """
+        if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+            return
+            
+        self._duplicate_computing = True
+        
+        # Run the heavy duplicate processing in a separate thread to prevent UI freezing
+        thread = threading.Thread(target=self._duplicate_thread_worker, daemon=True)
+        thread.start()
+
+    def _duplicate_thread_worker(self):
+        # We perform the heavy computation here
+        try:
+            records = self.all_dataset_records
+            n_records = len(records)
+            
+            # Pre-compute representation for all records
+            global_records_data = []
+            for idx, rec in enumerate(records):
+                h = rec.get("heading", "") or ""
+                t = rec.get("text", "") or ""
+                comb = f"{h} {t}".strip()
+                
+                words_comb = set(clean_text(comb))
+                words_h = set(clean_text(h))
+                
+                global_records_data.append({
+                    "idx": idx,
+                    "record": rec,
+                    "heading": h,
+                    "text": t,
+                    "combined": comb,
+                    "words_combined": words_comb,
+                    "words_heading": words_h
+                })
+                
+            # Build inverted index of combined words
+            global_inverted_index = {}
+            for idx, data in enumerate(global_records_data):
+                for word in data["words_combined"]:
+                    if word not in global_inverted_index:
+                        global_inverted_index[word] = []
+                    global_inverted_index[word].append(idx)
+                    
+            # Process all records
+            pairs_cache = []
+            
+            for i in range(n_records):
+                data_i = global_records_data[i]
+                words_i_comb = data_i["words_combined"]
+                if not words_i_comb:
+                    continue
+                    
+                # Find candidates sharing at least one word
+                candidates = {}
+                for word in words_i_comb:
+                    if word in global_inverted_index:
+                        for j in global_inverted_index[word]:
+                            if j > i:
+                                candidates[j] = candidates.get(j, 0) + 1
+                                
+                # Evaluate candidates
+                for j, intersection_len in candidates.items():
+                    data_j = global_records_data[j]
+                    words_j_comb = data_j["words_combined"]
+                    
+                    union_len = len(words_i_comb) + len(words_j_comb) - intersection_len
+                    combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
+                    
+                    combined_containment = 0.0
+                    if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
+                        containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
+                        containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
+                        combined_containment = max(containment_i_j, containment_j_i)
+                        
+                    combined_sim = max(combined_jaccard, combined_containment)
+                    
+                    heading_sim = 0.0
+                    h_i = data_i["heading"]
+                    h_j = data_j["heading"]
+                    if h_i and h_j:
+                        words_i_h = data_i["words_heading"]
+                        words_j_h = data_j["words_heading"]
+                        if len(words_i_h.intersection(words_j_h)) > 0 or len(h_i) < 20 or len(h_j) < 20:
+                            heading_sim = calculate_heading_similarity(h_i, h_j)
+                            
+                    text_sim = 0.0
+                    t_i = data_i["text"]
+                    t_j = data_j["text"]
+                    if t_i and t_j:
+                        text_jaccard = calculate_jaccard_similarity(t_i, t_j)
+                        text_containment = calculate_containment_similarity(t_i, t_j)
+                        text_sim = max(text_jaccard, text_containment)
+                        
+                    max_sim = max(combined_sim, heading_sim, text_sim)
+                    threshold = self._get_duplicate_threshold() / 100.0
+                    if max_sim >= threshold:
+                        pairs_cache.append({
+                            "idx_a": i,
+                            "idx_b": j,
+                            "record_a": data_i["record"],
+                            "record_b": data_j["record"],
+                            "similarity": max_sim,
+                            "combined_sim": combined_sim,
+                            "heading_sim": heading_sim,
+                            "text_sim": text_sim
+                        })
+            
+            # Use after() to safely update the GUI thread
+            self.after(0, lambda: self._on_duplicate_thread_done(pairs_cache))
+            
+        except Exception as e:
+            print(f"Error in background duplicate check: {e}")
+            self.after(0, lambda: self._on_duplicate_thread_done([]))
+
+    def _on_duplicate_thread_done(self, computed_cache):
+        self._duplicate_computing = False
+        self._raw_duplicate_pairs_cache = computed_cache
+        self._duplicate_pairs_cache = computed_cache
+        # Load non duplicates
+        non_dups = self._load_non_duplicates()
+        if non_dups:
+            self._apply_non_duplicates_filter()
+        self._update_stats()
+
+    def _get_non_duplicates_file_path(self):
+        import os
+        return SCRIPT_DIR / "non_duplicates.json"
+
+    def _load_non_duplicates(self):
+        import json
+        path = self._get_non_duplicates_file_path()
+        if path.exists():
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    return set(json.load(f))
+            except Exception as e:
+                print(f"Error loading non_duplicates.json: {e}")
+        return set()
+
+    def _save_non_duplicates(self, non_dups_set):
+        import json
+        path = self._get_non_duplicates_file_path()
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(list(non_dups_set), f)
+        except Exception as e:
+            print(f"Error saving non_duplicates.json: {e}")
+
+    def _get_duplicate_threshold(self):
+        cfg = get_full_config()
+        return cfg.get("duplicate_threshold", 60)
+
+    def _save_duplicate_threshold(self, threshold):
+        cfg = get_full_config()
+        cfg["duplicate_threshold"] = threshold
+        save_full_config(cfg)
+
+    def _apply_non_duplicates_filter(self):
+        if not hasattr(self, '_raw_duplicate_pairs_cache') or not self._raw_duplicate_pairs_cache:
+            return
+            
+        non_dups = self._load_non_duplicates()
+        if not non_dups:
+            self._duplicate_pairs_cache = list(self._raw_duplicate_pairs_cache)
+            return
+            
+        filtered_cache = []
+        for pair in self._raw_duplicate_pairs_cache:
+            id_a = str(pair["record_a"].get("id", ""))
+            id_b = str(pair["record_b"].get("id", ""))
+            
+            # Create a consistent pair key regardless of order
+            pair_key = f"{min(id_a, id_b)}_{max(id_a, id_b)}"
+            if pair_key not in non_dups:
+                filtered_cache.append(pair)
+                
+        self._duplicate_pairs_cache = filtered_cache
+
+    def _mark_as_non_duplicate(self, record_a, record_b):
+        id_a = str(record_a.get("id", ""))
+        id_b = str(record_b.get("id", ""))
+        if not id_a or not id_b:
+            messagebox.showwarning("Warning", "Cannot mark as non-duplicate: Missing IDs.")
+            return
+            
+        pair_key = f"{min(id_a, id_b)}_{max(id_a, id_b)}"
+        non_dups = self._load_non_duplicates()
+        non_dups.add(pair_key)
+        self._save_non_duplicates(non_dups)
+        
+        # Remove from current cache
+        self._apply_non_duplicates_filter()
+        self._update_stats()
+
+    def _unmark_as_non_duplicate(self, record_a, record_b):
+        id_a = str(record_a.get("id", ""))
+        id_b = str(record_b.get("id", ""))
+        if not id_a or not id_b:
+            return
+            
+        pair_key = f"{min(id_a, id_b)}_{max(id_a, id_b)}"
+        non_dups = self._load_non_duplicates()
+        if pair_key in non_dups:
+            non_dups.remove(pair_key)
+            self._save_non_duplicates(non_dups)
+        
+        self._apply_non_duplicates_filter()
+        self._update_stats()
+
+    def _unmark_all_non_duplicates(self):
+        import json
+        path = self._get_non_duplicates_file_path()
+        if path.exists():
+            try:
+                path.unlink()
+            except Exception as e:
+                print(f"Error deleting non_duplicates.json: {e}")
+        
+        # Since we just cleared the local filters, simply re-apply them to restore the cache
+        self._apply_non_duplicates_filter()
+        self._update_stats()
+
+
+    def _show_global_duplicate_audit(self, page=0):
+        if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+            messagebox.showinfo("Analysis in Progress", "Duplicate scan is currently running in the background. Please wait until it completes.")
+            return
+            
+        if not hasattr(self, '_duplicate_pairs_cache') or not self._duplicate_pairs_cache:
+            messagebox.showinfo("Duplicate Audit", "No potential duplicates found in the dataset.")
+            return
+            
+        popup = ctk.CTkToplevel(self)
+        popup.title("Global Duplicate Audit")
+        w, h = 900, 620
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        
+        # Center on screen
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        # Header
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
+        header_frame.pack(side="top", fill="x")
+        
+        # Header text
+        header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
+        header_inner.pack(fill="x", pady=12, padx=20)
+        
+        ctk.CTkLabel(
+            header_inner,
+            text=f"⚠️ Global Duplicate Audit — {len(self._duplicate_pairs_cache)} Potential Duplicates",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#f39c12"
+        ).pack(side="left")
+        
+        # Unmark all button & Show Marked checkbox & Threshold Input
+        controls_frame = ctk.CTkFrame(header_inner, fg_color="transparent")
+        controls_frame.pack(side="right")
+        
+        # Threshold Input
+        thresh_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+        thresh_frame.pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(thresh_frame, text="Threshold (%):", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ccc").pack(side="left", padx=(0, 5))
+        thresh_var = ctk.StringVar(value=str(self._get_duplicate_threshold()))
+        ctk.CTkEntry(thresh_frame, textvariable=thresh_var, width=35, height=26, font=ctk.CTkFont(size=12)).pack(side="left")
+        
+        def save_threshold():
+            try:
+                val = int(thresh_var.get().strip())
+                if 1 <= val <= 100:
+                    self._save_duplicate_threshold(val)
+                    # Clear the popup and show loading state
+                    for widget in popup.winfo_children():
+                        widget.destroy()
+                    ctk.CTkLabel(
+                        popup, text="🔄 Recalculating Duplicates...", 
+                        font=ctk.CTkFont(size=20, weight="bold"), 
+                        text_color="#f39c12"
+                    ).pack(expand=True)
+                    
+                    self._compute_global_duplicates()
+                    
+                    def check_done():
+                        if not getattr(self, '_duplicate_computing', False):
+                            popup.destroy()
+                            self._show_global_duplicate_audit(0)
+                        else:
+                            popup.after(100, check_done)
+                            
+                    check_done()
+                else:
+                    messagebox.showerror("Error", "Threshold must be between 1 and 100.")
+            except ValueError:
+                messagebox.showerror("Error", "Invalid threshold value.")
+                
+        ctk.CTkButton(
+            thresh_frame, text="Save", width=45, height=26, 
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#2980b9", hover_color="#3498db",
+            command=save_threshold
+        ).pack(side="left", padx=(5, 0))
+        
+        show_marked_var = ctk.BooleanVar(value=getattr(self, "_show_marked_duplicates", False))
+        def toggle_show_marked():
+            self._show_marked_duplicates = show_marked_var.get()
+            popup.destroy()
+            self._show_global_duplicate_audit(0)
+            
+        ctk.CTkCheckBox(
+            controls_frame, text="Show Marked", variable=show_marked_var,
+            command=toggle_show_marked, font=ctk.CTkFont(size=12)
+        ).pack(side="left", padx=(0, 15))
+        
+        if show_marked_var.get() and self._load_non_duplicates():
+            ctk.CTkButton(
+                controls_frame, text="Unmark All", width=90, height=28,
+                font=ctk.CTkFont(size=12, weight="bold"),
+                fg_color="#c0392b", hover_color="#e74c3c",
+                corner_radius=6,
+                command=lambda: [self._unmark_all_non_duplicates(), popup.destroy(), self._show_global_duplicate_audit(page)]
+            ).pack(side="left")
+            
+        cache_to_show = self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache
+        
+        PAGE_SIZE = 50
+        total_pages = max(1, (len(cache_to_show) + PAGE_SIZE - 1) // PAGE_SIZE)
+        
+        # Scrollable list of matches
+        scroll_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll_frame.pack(side="top", fill="both", expand=True, padx=20, pady=(15, 0))
+        
+        start_idx = page * PAGE_SIZE
+        end_idx = min(start_idx + PAGE_SIZE, len(cache_to_show))
+        display_list = cache_to_show[start_idx:end_idx]
+        
+        for pair in display_list:
+            idx_a = pair["idx_a"]
+            idx_b = pair["idx_b"]
+            sim = pair["similarity"]
+            combined_sim = pair["combined_sim"]
+            heading_sim = pair["heading_sim"]
+            text_sim = pair.get("text_sim", 0.0)
+            
+            sim_pct = int(sim * 100)
+            
+            # -- Card row --
+            row_frame = ctk.CTkFrame(scroll_frame, fg_color="#2b2b36", corner_radius=8,
+                                      border_width=1, border_color="#444")
+            row_frame.pack(fill="x", pady=4, ipady=6)
+            
+            # Badges for both records
+            badge_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            badge_frame.pack(side="left", padx=(10, 8), pady=6)
+            
+            color_a = "#e74c3c" if sim_pct >= 80 else ("#f39c12" if sim_pct >= 60 else "#3498db")
+            
+            badge_a = ctk.CTkLabel(
+                badge_frame, text=f" #{idx_a + 1} ",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                fg_color=color_a, corner_radius=6,
+                text_color="white", width=45
+            )
+            badge_a.pack(side="left", padx=2)
+            
+            ctk.CTkLabel(badge_frame, text="↔", font=ctk.CTkFont(size=14, weight="bold"), text_color="#aaa").pack(side="left", padx=2)
+            
+            badge_b = ctk.CTkLabel(
+                badge_frame, text=f" #{idx_b + 1} ",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                fg_color=color_a, corner_radius=6,
+                text_color="white", width=45
+            )
+            badge_b.pack(side="left", padx=2)
+            
+            # Match info text
+            info_text = f"{sim_pct}% match  ·  Head+Body: {int(combined_sim*100)}%  ·  Heading: {int(heading_sim*100)}%  ·  Text: {int(text_sim*100)}%"
+            ctk.CTkLabel(
+                row_frame, text=info_text,
+                font=ctk.CTkFont(size=11),
+                text_color="#ccc", anchor="w"
+            ).pack(side="left", fill="x", expand=True, padx=(5, 8))
+            
+            # Action buttons frame
+            actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+            actions_frame.pack(side="right", padx=(0, 10), pady=6)
+            
+            # Compare button
+            ctk.CTkButton(
+                actions_frame, text="🔍 Compare", width=90, height=28,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                fg_color="#6c5ce7", hover_color="#5a4bd1",
+                corner_radius=6,
+                command=lambda p=pair: self._show_side_by_side_comparison(
+                    p["record_a"], p["record_b"], p, parent_popup=popup,
+                    on_mark_change_callback=lambda: [popup.destroy(), self._show_global_duplicate_audit(page)]
+                )
+            ).pack(side="right", padx=(4, 0))
+
+            # Not Duplicate / Restore button
+            non_dups = self._load_non_duplicates()
+            id_a_str = str(pair["record_a"].get("id", ""))
+            id_b_str = str(pair["record_b"].get("id", ""))
+            pair_key = f"{min(id_a_str, id_b_str)}_{max(id_a_str, id_b_str)}"
+            is_marked = pair_key in non_dups
+            
+            if is_marked:
+                ctk.CTkButton(
+                    actions_frame, text="Restore Duplicate ♻️", width=140, height=28,
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color="#e67e22", hover_color="#d35400",
+                    corner_radius=6,
+                    command=lambda p=pair: [self._unmark_as_non_duplicate(p["record_a"], p["record_b"]), popup.destroy(), self._show_global_duplicate_audit(page)]
+                ).pack(side="right")
+            else:
+                ctk.CTkButton(
+                    actions_frame, text="Non Duplicate❓", width=140, height=28,
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color="#27ae60", hover_color="#2ecc71",
+                    corner_radius=6,
+                    command=lambda p=pair: [self._mark_as_non_duplicate(p["record_a"], p["record_b"]), popup.destroy(), self._show_global_duplicate_audit(page)]
+                ).pack(side="right")
+                
+        # Pagination controls at bottom
+        pagination_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        pagination_frame.pack(side="bottom", fill="x", pady=15, padx=20)
+        
+        def go_prev():
+            if page > 0:
+                popup.destroy()
+                self._show_global_duplicate_audit(page - 1)
+                
+        def go_next():
+            if page < total_pages - 1:
+                popup.destroy()
+                self._show_global_duplicate_audit(page + 1)
+        
+        prev_btn = ctk.CTkButton(pagination_frame, text="◀ Prev", width=70, state="normal" if page > 0 else "disabled", command=go_prev)
+        prev_btn.pack(side="left")
+        
+        ctk.CTkLabel(pagination_frame, text=f"Page {page + 1} of {total_pages}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", expand=True)
+        
+        next_btn = ctk.CTkButton(pagination_frame, text="Next ▶", width=70, state="normal" if page < total_pages - 1 else "disabled", command=go_next)
+        next_btn.pack(side="left")
+        
+        close_btn = ctk.CTkButton(
+            pagination_frame,
+            text="Close",
+            width=120,
+            command=popup.destroy,
+            fg_color="#34495e",
+            hover_color="#2c3e50"
+        )
+        close_btn.pack(side="right")
+
+
+    def _show_side_by_side_comparison(self, record_a, record_b, pair_info, parent_popup=None, on_mark_change_callback=None):
+        popup = ctk.CTkToplevel(parent_popup if parent_popup else self)
+        popup.title("Side-by-Side Comparison")
+        w, h = 1100, 680
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        if parent_popup:
+            popup.transient(parent_popup)
+        
+        # Center on screen
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        # Header
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
+        header_frame.pack(fill="x", side="top")
+        
+        sim_pct = int(pair_info["similarity"] * 100)
+        ctk.CTkLabel(
+            header_frame,
+            text=f"Side-by-Side Comparison  ·  Record #{pair_info.get('idx_a', 0) + 1} ↔ Record #{pair_info.get('idx_b', 0) + 1}  ·  {sim_pct}% match",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#f39c12"
+        ).pack(pady=12, padx=20)
+        
+        # Scrollable container for columns
+        scroll_container = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll_container.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        # Two columns layout inside scroll_container
+        col_frame = ctk.CTkFrame(scroll_container, fg_color="transparent")
+        col_frame.pack(fill="both", expand=True)
+        col_frame.grid_columnconfigure(0, weight=1, uniform="col")
+        col_frame.grid_columnconfigure(1, weight=1, uniform="col")
+        
+        # Left column (Record A)
+        col_a = ctk.CTkFrame(col_frame, fg_color="#2b2b36", corner_radius=8, border_width=1, border_color="#444")
+        col_a.grid(row=0, column=0, padx=(0, 10), sticky="nsew", ipadx=10, ipady=10)
+        
+        # Right column (Record B)
+        col_b = ctk.CTkFrame(col_frame, fg_color="#2b2b36", corner_radius=8, border_width=1, border_color="#444")
+        col_b.grid(row=0, column=1, padx=(10, 0), sticky="nsew", ipadx=10, ipady=10)
+        
+        # Display helper for each column
+        def populate_column(col_widget, rec, other_rec, label_num):
+            # Header
+            lbl_title = ctk.CTkLabel(
+                col_widget, text=f"Record #{label_num}",
+                font=ctk.CTkFont(size=14, weight="bold"),
+                text_color="#3498db"
+            )
+            lbl_title.pack(anchor="w", pady=(10, 5))
+            
+            # Fields
+            self._add_detail_field(col_widget, "Label Status", f"{rec.get('label', '')} ({rec.get('multi_category', 'N/A')})", 
+                                   label_color="#e74c3c" if rec.get('label') == "Fake" else "#2ecc71")
+            self._add_detail_field(col_widget, "Category", rec.get("category", "N/A"))
+            self._add_detail_field(col_widget, "Annotator", rec.get("annotator", "N/A"))
+            self._add_detail_field(col_widget, "Source Link", rec.get("source", "N/A"))
+            
+            heading_self = rec.get("heading", "") or ""
+            heading_other = other_rec.get("heading", "") or ""
+            text_self = rec.get("text", "") or ""
+            text_other = other_rec.get("text", "") or ""
+            
+            # Textboxes
+            self._add_highlighted_textbox(col_widget, "News Heading", heading_self, heading_other, height=60)
+            self._add_highlighted_textbox(col_widget, "News Text", text_self, text_other, height=200)
+            
+            # Media buttons
+            img_paths = rec.get("image_path", "")
+            vid_path = rec.get("video_path", "")
+            if img_paths or vid_path:
+                media_frame = ctk.CTkFrame(col_widget, fg_color="transparent")
+                media_frame.pack(fill="x", pady=6)
+                
+                ctk.CTkLabel(
+                    media_frame, text="Attached Media:",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#888", anchor="w"
+                ).pack(fill="x", pady=(0, 4))
+                
+                media_btns_frame = ctk.CTkFrame(media_frame, fg_color="transparent")
+                media_btns_frame.pack(fill="x")
+                
+                if img_paths:
+                    for rel_path in img_paths.split(";"):
+                        rel_path = rel_path.strip()
+                        if rel_path:
+                            full_path = SCRIPT_DIR / rel_path
+                            exists = full_path.exists()
+                            btn = ctk.CTkButton(
+                                media_btns_frame,
+                                text=f"🖼 {Path(rel_path).name}" if exists else f"⚠️ {Path(rel_path).name} (missing)",
+                                height=28,
+                                font=ctk.CTkFont(size=11),
+                                fg_color="#2d6a4f" if exists else "#555",
+                                hover_color="#40916c" if exists else "#555",
+                                corner_radius=6,
+                                command=(lambda p=str(full_path): self._open_media_file(p)) if exists else None
+                            )
+                            btn.pack(side="left", padx=(0, 4), pady=2)
+                
+                if vid_path:
+                    vid_path_str = vid_path.strip()
+                    if vid_path_str:
+                        full_vid = SCRIPT_DIR / vid_path_str
+                        exists = full_vid.exists()
+                        btn = ctk.CTkButton(
+                            media_btns_frame,
+                            text=f"🎬 {Path(vid_path_str).name}" if exists else f"⚠️ {Path(vid_path_str).name} (missing)",
+                            height=28,
+                            font=ctk.CTkFont(size=11),
+                            fg_color="#7b2cbf" if exists else "#555",
+                            hover_color="#9d4edd" if exists else "#555",
+                            corner_radius=6,
+                            command=(lambda p=str(full_vid): self._open_media_file(p)) if exists else None
+                        )
+                        btn.pack(side="left", padx=(0, 4), pady=2)
+                        
+        populate_column(col_a, record_a, record_b, pair_info.get("idx_a", 0) + 1)
+        populate_column(col_b, record_b, record_a, pair_info.get("idx_b", 0) + 1)
+        
+        # Bottom actions frame
+        actions_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        actions_frame.pack(side="bottom", fill="x", pady=15, padx=20)
+        
+        # Legend (left side)
+        legend_lbl = ctk.CTkLabel(
+            actions_frame,
+            text="🟡 Highlighted orange = words matching the compared entry",
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#f39c12"
+        )
+        legend_lbl.pack(side="left", padx=10)
+        
+        # Buttons container (right side)
+        btn_container = ctk.CTkFrame(actions_frame, fg_color="transparent")
+        btn_container.pack(side="right")
+        
+        # Not Duplicate / Restore button
+        non_dups = self._load_non_duplicates()
+        id_a_str = str(record_a.get("id", ""))
+        id_b_str = str(record_b.get("id", ""))
+        pair_key = f"{min(id_a_str, id_b_str)}_{max(id_a_str, id_b_str)}"
+        is_marked = pair_key in non_dups
+        
+        if is_marked:
+            ctk.CTkButton(
+                btn_container, text="Restore Duplicate ♻️", width=160, height=34,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color="#e67e22", hover_color="#d35400",
+                command=lambda: [
+                    self._unmark_as_non_duplicate(record_a, record_b), 
+                    popup.destroy(),
+                    (on_mark_change_callback() if on_mark_change_callback else None)
+                ]
+            ).pack(side="left", padx=(0, 10))
+        else:
+            ctk.CTkButton(
+                btn_container, text="Non Duplicate❓", width=160, height=34,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color="#27ae60", hover_color="#2ecc71",
+                command=lambda: [
+                    self._mark_as_non_duplicate(record_a, record_b), 
+                    popup.destroy(),
+                    (on_mark_change_callback() if on_mark_change_callback else None)
+                ]
+            ).pack(side="left", padx=(0, 10))
+        
+        # Close button
+        ctk.CTkButton(
+            btn_container, 
+            text="Close", 
+            width=120, 
+            height=34, 
+            command=popup.destroy,
+            fg_color="#34495e",
+            hover_color="#2c3e50",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).pack(side="left")
+
+    def _show_duplicate_save_warning(self, matches, on_confirm_save):
+
+        """
+        Displays a warning window showing the potential duplicates before saving.
+        Allows the user to proceed with saving or cancel.
+        """
+        popup = ctk.CTkToplevel(self)
+        popup.title("Duplicate News Verification")
+        w, h = 650, 500
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        # Center on screen
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - w) // 2
+        sy = (popup.winfo_screenheight() - h) // 2
+        popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        # Header
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b1b1b", height=60, corner_radius=0)
+        header_frame.pack(fill="x", side="top")
+        
+        ctk.CTkLabel(
+            header_frame,
+            text="⚠️ Potential Duplicates Detected!",
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#e74c3c"
+        ).pack(pady=(10, 2), padx=20)
+        
+        ctk.CTkLabel(
+            header_frame,
+            text="The entry you are saving is very similar to existing news items.",
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#aaa"
+        ).pack(pady=(0, 10), padx=20)
+        
+        # Scrollable container of matching duplicates
+        scroll_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll_frame.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        # Help label
+        ctk.CTkLabel(
+            scroll_frame,
+            text="Please inspect the matched items below before proceeding:",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            anchor="w",
+            text_color="#eee"
+        ).pack(fill="x", pady=(0, 6))
+        
+        for match in matches:
+            row_num = match["row_num"]
+            sim = match["similarity"]
+            combined_sim = match.get("combined_sim", 0)
+            heading_sim = match.get("heading_sim", 0)
+            
+            sim_pct = int(sim * 100)
+            
+            # -- Card row --
+            row_frame = ctk.CTkFrame(scroll_frame, fg_color="#2b2b36", corner_radius=8,
+                                      border_width=1, border_color="#444")
+            row_frame.pack(fill="x", pady=4, ipady=6)
+            
+            # Instance number badge
+            badge_color = "#e74c3c" if sim_pct >= 80 else ("#f39c12" if sim_pct >= 60 else "#3498db")
+            badge = ctk.CTkLabel(
+                row_frame, text=f" #{row_num} ",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                fg_color=badge_color, corner_radius=6,
+                text_color="white", width=50
+            )
+            badge.pack(side="left", padx=(10, 8), pady=6)
+            
+            # Match info text
+            text_sim = match.get("text_sim", 0.0)
+            info_text = f"{sim_pct}% match  ·  Head+Body: {sim_pct}%  ·  Heading: {int(heading_sim*100)}%  ·  Text: {int(text_sim*100)}%"
+            ctk.CTkLabel(
+                row_frame, text=info_text,
+                font=ctk.CTkFont(size=12),
+                text_color="#ccc", anchor="w"
+            ).pack(side="left", fill="x", expand=True, padx=(0, 8))
+
+            
+            # Inspect button
+            ctk.CTkButton(
+                row_frame, text="🔍 Inspect", width=90, height=28,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                fg_color="#6c5ce7", hover_color="#5a4bd1",
+                corner_radius=6,
+                command=lambda m=match: self._view_duplicate_details(m)
+            ).pack(side="right", padx=(0, 10), pady=6)
+            
+        # Bottom Actions Frame (centered)
+        actions_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        actions_frame.pack(side="bottom", pady=15)
+        
+        def save_anyway():
+            popup.destroy()
+            on_confirm_save()
+            
+        def cancel_save():
+            popup.destroy()
+            
+        # Save Anyway Button
+        save_btn = ctk.CTkButton(
+            actions_frame,
+            text="✅ Save Anyway",
+            width=140,
+            height=34,
+            fg_color="#2ecc71",
+            hover_color="#27ae60",
+            text_color="black",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=save_anyway
+        )
+        save_btn.pack(side="left", padx=(0, 12))
+        
+        # Cancel Button
+        cancel_btn = ctk.CTkButton(
+            actions_frame,
+            text="❌ Cancel & Edit",
+            width=140,
+            height=34,
+            fg_color="#e74c3c",
+            hover_color="#c0392b",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=cancel_save
+        )
+        cancel_btn.pack(side="left")
+
+    def _view_duplicate_details(self, match_info):
+        """
+        Opens a popup detail view to inspect the matched record.
+        Media files are rendered as clickable buttons that open in the OS default viewer.
+        """
+        row_num = match_info["row_num"]
+        record = match_info["record"]
+        similarity = match_info["similarity"]
+        combined_sim = match_info.get("combined_sim", 0)
+        heading_sim = match_info.get("heading_sim", 0)
+        containment_sim = match_info.get("containment_sim", 0)
+        
+        popup = ctk.CTkToplevel(self)
+        popup.title(f"Duplicate Inspection - Instance #{row_num}")
+        pw, ph = 750, 680
+        popup.configure(fg_color="#1a1a2e")
+        popup.attributes("-topmost", True)
+        # Center on screen
+        popup.update_idletasks()
+        sx = (popup.winfo_screenwidth() - pw) // 2
+        sy = (popup.winfo_screenheight() - ph) // 2
+        popup.geometry(f"{pw}x{ph}+{sx}+{sy}")
+        
+        # Header
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b1b1b" if similarity >= 0.75 else "#2b2b36", height=60, corner_radius=0)
+        header_frame.pack(fill="x", side="top")
+        
+        ctk.CTkLabel(
+            header_frame, 
+            text=f"⚠️ Potential Duplicate (Instance #{row_num})", 
+            font=ctk.CTkFont(size=18, weight="bold"),
+            text_color="#e74c3c" if similarity >= 0.75 else "#f39c12"
+        ).pack(pady=(8, 2), padx=20)
+        
+        text_sim = match_info.get("text_sim", 0.0)
+        ctk.CTkLabel(
+            header_frame,
+            text=f"Head+Body (Overall): {similarity * 100:.1f}%  ·  Heading: {heading_sim * 100:.1f}%  ·  Text: {text_sim * 100:.1f}%",
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#aaa"
+        ).pack(pady=(0, 8), padx=20)
+
+        
+        # Scrollable container
+        details_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        details_frame.pack(fill="both", expand=True, padx=20, pady=15)
+        
+        # Legend label
+        legend_lbl = ctk.CTkLabel(
+            details_frame,
+            text="🟡 Highlighted orange = words matching the compared entry",
+            font=ctk.CTkFont(size=12, slant="italic"),
+            text_color="#f39c12",
+            anchor="w"
+        )
+        legend_lbl.pack(fill="x", pady=(0, 10))
+        
+        # Fields
+        self._add_detail_field(details_frame, "Label Status", f"{record.get('label', '')} ({record.get('multi_category', 'N/A')})", 
+                               label_color="#e74c3c" if record.get('label') == "Fake" else "#2ecc71")
+        self._add_detail_field(details_frame, "Category", record.get("category", "N/A"))
+        self._add_detail_field(details_frame, "Source Category", record.get("source_category", "N/A"))
+        self._add_detail_field(details_frame, "Annotator", record.get("annotator", "N/A"))
+        self._add_detail_field(details_frame, "Source Link", record.get("source", "N/A"))
+        
+        new_heading = match_info.get("new_heading_ref", "")
+        new_text = match_info.get("new_text_ref", "")
+        
+        heading_text = record.get("heading", "")
+        if heading_text:
+            self._add_highlighted_textbox(details_frame, "News Heading", heading_text, new_heading or "", height=60)
+            
+        body_text = record.get("text", "")
+        if body_text:
+            self._add_highlighted_textbox(details_frame, "News Text", body_text, new_text or "", height=220)
+            
+        # Attached Media — clickable buttons to open files
+        img_paths = record.get("image_path", "")
+        vid_path = record.get("video_path", "")
+        if img_paths or vid_path:
+            media_frame = ctk.CTkFrame(details_frame, fg_color="transparent")
+            media_frame.pack(fill="x", pady=6)
+            
+            ctk.CTkLabel(
+                media_frame, text="Attached Media:",
+                font=ctk.CTkFont(size=13, weight="bold"),
+                text_color="#888", anchor="w"
+            ).pack(fill="x", pady=(0, 4))
+            
+            media_btns_frame = ctk.CTkFrame(media_frame, fg_color="transparent")
+            media_btns_frame.pack(fill="x")
+            
+            if img_paths:
+                for rel_path in img_paths.split(";"):
+                    rel_path = rel_path.strip()
+                    if rel_path:
+                        full_path = SCRIPT_DIR / rel_path
+                        exists = full_path.exists()
+                        btn = ctk.CTkButton(
+                            media_btns_frame,
+                            text=f"🖼 {Path(rel_path).name}" if exists else f"⚠️ {Path(rel_path).name} (missing)",
+                            height=28,
+                            font=ctk.CTkFont(size=11),
+                            fg_color="#2d6a4f" if exists else "#555",
+                            hover_color="#40916c" if exists else "#555",
+                            corner_radius=6,
+                            command=(lambda p=str(full_path): self._open_media_file(p)) if exists else None
+                        )
+                        btn.pack(side="left", padx=(0, 6), pady=2)
+            
+            if vid_path:
+                vid_path_str = vid_path.strip()
+                if vid_path_str:
+                    full_vid = SCRIPT_DIR / vid_path_str
+                    exists = full_vid.exists()
+                    btn = ctk.CTkButton(
+                        media_btns_frame,
+                        text=f"🎬 {Path(vid_path_str).name}" if exists else f"⚠️ {Path(vid_path_str).name} (missing)",
+                        height=28,
+                        font=ctk.CTkFont(size=11),
+                        fg_color="#7b2cbf" if exists else "#555",
+                        hover_color="#9d4edd" if exists else "#555",
+                        corner_radius=6,
+                        command=(lambda p=str(full_vid): self._open_media_file(p)) if exists else None
+                    )
+                    btn.pack(side="left", padx=(0, 6), pady=2)
+            
+        # Close button (centered)
+        ctk.CTkButton(
+            popup, 
+            text="Close", 
+            width=120, 
+            height=34, 
+            command=popup.destroy,
+            fg_color="#34495e",
+            hover_color="#2c3e50",
+            font=ctk.CTkFont(size=13, weight="bold")
+        ).pack(pady=(0, 15))
+
+    def _open_media_file(self, file_path):
+        """Opens a media file (image or video) in the OS default viewer."""
+        import subprocess
+        try:
+            if platform.system() == "Darwin":
+                subprocess.Popen(["open", file_path])
+            elif platform.system() == "Windows":
+                os.startfile(file_path)
+            else:
+                subprocess.Popen(["xdg-open", file_path])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open file:\n{file_path}\n\n{e}")
+
+    def _add_detail_field(self, parent, label_text, value_text, label_color=None):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=4)
+        
+        lbl = ctk.CTkLabel(frame, text=f"{label_text}:", font=ctk.CTkFont(size=13, weight="bold"), text_color="#888", width=120, anchor="w")
+        lbl.pack(side="left")
+        
+        val = ctk.CTkLabel(frame, text=value_text, font=ctk.CTkFont(size=13), anchor="w", justify="left")
+        if label_color:
+            val.configure(text_color=label_color, font=ctk.CTkFont(size=13, weight="bold"))
+        val.pack(side="left", fill="x", expand=True)
+
+    def _add_detail_textbox(self, parent, label_text, content_text, height=100):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=6)
+        
+        lbl = ctk.CTkLabel(frame, text=label_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#888", anchor="w")
+        lbl.pack(fill="x", pady=(0, 2))
+        
+        tb = ctk.CTkTextbox(frame, height=height, font=ctk.CTkFont(size=12))
+        tb.pack(fill="x")
+        tb.insert("1.0", content_text)
+        
+        # Prevent scroll event propagation to the parent CTkScrollableFrame
+        # but allow propagation once the textbox scroll limits are reached.
+        text_widget = tb._textbox
+        def stop_propagation(event):
+            y_start, y_end = text_widget.yview()
+            
+            # Check scroll direction (up vs down)
+            if event.delta:
+                is_up = event.delta > 0
+                scroll_amount = -1 if is_up else 1
+            else:
+                is_up = event.num == 4
+                scroll_amount = -1 if is_up else 1
+                
+            if is_up:
+                # If not at the top, scroll textbox and block propagation
+                if y_start > 0.0:
+                    text_widget.yview_scroll(scroll_amount, "units")
+                    return "break"
+            else:
+                # If not at the bottom, scroll textbox and block propagation
+                if y_end < 1.0:
+                    text_widget.yview_scroll(scroll_amount, "units")
+                    return "break"
+            
+            # Let the event bubble up to the parent scrollable frame
+            return None
+            
+        text_widget.bind("<MouseWheel>", stop_propagation)
+        text_widget.bind("<Button-4>", stop_propagation)
+        text_widget.bind("<Button-5>", stop_propagation)
+
+        
+        tb.configure(state="disabled")
+
+
+    def _add_highlighted_textbox(self, parent, label_text, existing_text, new_text, height=100):
+        frame = ctk.CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=6)
+        
+        # Calculate overlap words for helper header
+        words_existing = get_words_with_positions(existing_text)
+        words_new_set = {w['word'] for w in get_words_with_positions(new_text)}
+        matched_words_count = 0
+        if words_existing and words_new_set:
+            matched_words_count = sum(1 for w in words_existing if w['word'] in words_new_set)
+        
+        pct_overlap = int((matched_words_count / len(words_existing)) * 100) if words_existing else 0
+        
+        # Label with word overlap summary
+        header_text = f"{label_text}  ({matched_words_count} of {len(words_existing)} words matched · {pct_overlap}% overlap)"
+        lbl = ctk.CTkLabel(frame, text=header_text, font=ctk.CTkFont(size=13, weight="bold"), text_color="#888", anchor="w")
+        lbl.pack(fill="x", pady=(0, 2))
+        
+        tb = ctk.CTkTextbox(frame, height=height, font=ctk.CTkFont(size=12))
+        tb.pack(fill="x")
+        tb.insert("1.0", existing_text)
+        
+        # Find ranges and highlight them in orange
+        ranges = find_matching_word_ranges(new_text, existing_text, n=4)
+        
+        # We need a tag config for the highlight
+        tb.tag_config("match_highlight", background="#f39c12", foreground="black")
+        
+        # Add tags for each range
+        for start_char, end_char in ranges:
+            start_index = f"1.0 + {start_char} chars"
+            end_index = f"1.0 + {end_char} chars"
+            tb.tag_add("match_highlight", start_index, end_index)
+            
+        # Prevent scroll event propagation to the parent CTkScrollableFrame
+        # but allow propagation once the textbox scroll limits are reached.
+        text_widget = tb._textbox
+        def stop_propagation(event):
+            y_start, y_end = text_widget.yview()
+            
+            # Check scroll direction (up vs down)
+            if event.delta:
+                is_up = event.delta > 0
+                scroll_amount = -1 if is_up else 1
+            else:
+                is_up = event.num == 4
+                scroll_amount = -1 if is_up else 1
+                
+            if is_up:
+                # If not at the top, scroll textbox and block propagation
+                if y_start > 0.0:
+                    text_widget.yview_scroll(scroll_amount, "units")
+                    return "break"
+            else:
+                # If not at the bottom, scroll textbox and block propagation
+                if y_end < 1.0:
+                    text_widget.yview_scroll(scroll_amount, "units")
+                    return "break"
+            
+            # Let the event bubble up to the parent scrollable frame
+            return None
+            
+        text_widget.bind("<MouseWheel>", stop_propagation)
+        text_widget.bind("<Button-4>", stop_propagation)
+        text_widget.bind("<Button-5>", stop_propagation)
+
+        tb.configure(state="disabled")
+
+
 
 # Launch the Tkinter application main loop when running this script directly
 if __name__ == "__main__":

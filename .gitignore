@@ -17,6 +17,7 @@ images/
 videos/
 .annotator_config.json
 relabeling_for_kappa.csv
+non_duplicates.json
 
 # IDE
 .vscode/
