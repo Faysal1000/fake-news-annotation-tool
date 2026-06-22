@@ -2110,7 +2110,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         max_h = int(screen_h * 0.8)
         img.thumbnail((max_w, max_h), Image.LANCZOS)
 
-        popup.geometry(f"{img.width + 40}x{img.height + 80}")
+        popup.geometry(f"{img.width + 40}x{img.height + 100}")
 
         ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
                                   size=(img.width, img.height))
@@ -2123,8 +2123,16 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         ctk.CTkLabel(popup, text=name, font=ctk.CTkFont(size=12),
                      text_color="#aaa").pack(pady=(0, 5))
 
-        ctk.CTkButton(popup, text="Close", width=100, height=30,
-                      command=popup.destroy).pack(pady=(0, 10))
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(pady=(0, 10))
+        
+        if path:
+            ctk.CTkButton(btn_frame, text="📂 Open File Location", width=140, height=30,
+                          fg_color="#2d6a4f", hover_color="#40916c",
+                          command=lambda: self._open_file_location(path)).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(btn_frame, text="Close", width=100, height=30,
+                      command=popup.destroy).pack(side="left")
 
     def _play_video(self):
         if not self.video_path: return
@@ -5348,7 +5356,7 @@ class AnnotatorTool(ctk.CTk, dnd_base):
             return
 
         # Double check delete intent by prompting a warning dialog window
-        confirm = messagebox.askyesno("Confirm Delete",
+        confirm = self._custom_ask_yes_no("Confirm Delete",
             f"Are you sure you want to delete Record {self.current_review_index + 1}?\n\n"
             "This action cannot be undone.")
         if not confirm:
@@ -8083,21 +8091,121 @@ fi
         col_b.grid(row=0, column=1, padx=(10, 0), sticky="nsew", ipadx=10, ipady=10)
         
         # Display helper for each column
-        def populate_column(col_widget, rec, other_rec, label_num):
-            # Header
+        def populate_column(col_widget, rec, other_rec, label_num, rec_idx):
+            # Header row with title + action buttons
+            header_row = ctk.CTkFrame(col_widget, fg_color="transparent")
+            header_row.pack(fill="x", padx=12, pady=(12, 4))
+            
             lbl_title = ctk.CTkLabel(
-                col_widget, text=f"Record #{label_num}",
+                header_row, text=f"Record #{label_num}",
                 font=ctk.CTkFont(size=14, weight="bold"),
                 text_color="#3498db"
             )
-            lbl_title.pack(anchor="w", pady=(10, 5))
+            lbl_title.pack(side="left")
+            
+            # Action buttons (top-right corner)
+            action_btns = ctk.CTkFrame(header_row, fg_color="transparent")
+            action_btns.pack(side="right")
+            
+            def go_to_review(record):
+                """Close all popups and jump to this record in Review mode."""
+                record_id = record.get("id", "")
+                # Close this popup and parent popup
+                popup.destroy()
+                if parent_popup:
+                    try: parent_popup.destroy()
+                    except: pass
+                
+                # Switch to Review mode if not already
+                if self.current_mode != "review":
+                    self.mode_switcher.set("🔍 Review")
+                    self._toggle_mode("🔍 Review")
+                
+                # Clear filters so all records are visible
+                self.advanced_filter = None
+                self._apply_advanced_filter()
+                
+                # Find the record by ID and jump to it
+                for i, r in enumerate(self.dataset_records):
+                    if (r.get("id") or "") == record_id:
+                        self.current_review_index = i
+                        self._display_record(i)
+                        break
+            
+            def delete_record(record, record_label):
+                """Delete a specific record by ID after confirmation."""
+                record_id = record.get("id", "")
+                heading_preview = (record.get("heading", "") or "")[:60]
+                
+                confirm = self._custom_ask_yes_no(
+                    "Confirm Delete",
+                    f"Are you sure you want to delete Record #{record_label}?\n\n"
+                    f"\"{heading_preview}{'...' if len(record.get('heading', '') or '') > 60 else ''}\"\n\n"
+                    "This action cannot be undone."
+                )
+                if not confirm:
+                    return
+                
+                # Find and remove from all_dataset_records
+                all_idx = next((i for i, r in enumerate(self.all_dataset_records) if (r.get("id") or "") == record_id), -1)
+                if all_idx >= 0:
+                    self.all_dataset_records.pop(all_idx)
+                
+                # Find and remove from dataset_records (filtered view)
+                ds_idx = next((i for i, r in enumerate(self.dataset_records) if (r.get("id") or "") == record_id), -1)
+                if ds_idx >= 0:
+                    self.dataset_records.pop(ds_idx)
+                
+                # Rewrite the CSV
+                try:
+                    self._rewrite_csv()
+                except Exception as e:
+                    messagebox.showerror("Delete Error", f"Failed to delete entry.\n\nError: {e}")
+                    return
+                
+                # Refresh the view
+                self._apply_advanced_filter(keep_index=True)
+                
+                # If currently in review mode, refresh the displayed record
+                if self.current_mode == "review" and self.dataset_records:
+                    if self.current_review_index >= len(self.dataset_records):
+                        self.current_review_index = max(0, len(self.dataset_records) - 1)
+                    self._display_record(self.current_review_index)
+                
+                # Close this popup and refresh parent
+                popup.destroy()
+                if on_mark_change_callback:
+                    on_mark_change_callback()
+                elif parent_popup:
+                    try: parent_popup.destroy()
+                    except: pass
+            
+            ctk.CTkButton(
+                action_btns, text="📋 Review", width=80, height=26,
+                font=ctk.CTkFont(size=11, weight="bold"),
+                fg_color="#2980b9", hover_color="#3498db",
+                corner_radius=5,
+                command=lambda r=rec: go_to_review(r)
+            ).pack(side="left", padx=(0, 4))
+            
+            ctk.CTkButton(
+                action_btns, text="🗑", width=30, height=26,
+                font=ctk.CTkFont(size=13),
+                fg_color="#c0392b", hover_color="#e74c3c",
+                corner_radius=5,
+                command=lambda r=rec, ln=label_num: delete_record(r, ln)
+            ).pack(side="left")
+            
+            # Content area with proper padding
+            content_area = ctk.CTkFrame(col_widget, fg_color="transparent")
+            content_area.pack(fill="x", padx=12, pady=(0, 10))
             
             # Fields
-            self._add_detail_field(col_widget, "Label Status", f"{rec.get('label', '')} ({rec.get('multi_category', 'N/A')})", 
+            self._add_detail_field(content_area, "Label Status", f"{rec.get('label', '')} ({rec.get('multi_category', 'N/A')})", 
                                    label_color="#e74c3c" if rec.get('label') == "Fake" else "#2ecc71")
-            self._add_detail_field(col_widget, "Category", rec.get("category", "N/A"))
-            self._add_detail_field(col_widget, "Annotator", rec.get("annotator", "N/A"))
-            self._add_detail_field(col_widget, "Source Link", rec.get("source", "N/A"))
+            self._add_detail_field(content_area, "Category", rec.get("category", "N/A"))
+            self._add_detail_field(content_area, "Annotator", rec.get("annotator", "N/A"))
+            self._add_detail_field(content_area, "Source Link", rec.get("source", "N/A"))
             
             heading_self = rec.get("heading", "") or ""
             heading_other = other_rec.get("heading", "") or ""
@@ -8105,14 +8213,14 @@ fi
             text_other = other_rec.get("text", "") or ""
             
             # Textboxes
-            self._add_highlighted_textbox(col_widget, "News Heading", heading_self, heading_other, height=60)
-            self._add_highlighted_textbox(col_widget, "News Text", text_self, text_other, height=200)
+            self._add_highlighted_textbox(content_area, "News Heading", heading_self, heading_other, height=60)
+            self._add_highlighted_textbox(content_area, "News Text", text_self, text_other, height=200)
             
             # Media buttons
             img_paths = rec.get("image_path", "")
             vid_path = rec.get("video_path", "")
             if img_paths or vid_path:
-                media_frame = ctk.CTkFrame(col_widget, fg_color="transparent")
+                media_frame = ctk.CTkFrame(content_area, fg_color="transparent")
                 media_frame.pack(fill="x", pady=6)
                 
                 ctk.CTkLabel(
@@ -8138,7 +8246,7 @@ fi
                                 fg_color="#2d6a4f" if exists else "#555",
                                 hover_color="#40916c" if exists else "#555",
                                 corner_radius=6,
-                                command=(lambda p=str(full_path): self._open_media_file(p)) if exists else None
+                                command=(lambda p=full_path: self._show_image_by_path(p)) if exists else None
                             )
                             btn.pack(side="left", padx=(0, 4), pady=2)
                 
@@ -8155,12 +8263,12 @@ fi
                             fg_color="#7b2cbf" if exists else "#555",
                             hover_color="#9d4edd" if exists else "#555",
                             corner_radius=6,
-                            command=(lambda p=str(full_vid): self._open_media_file(p)) if exists else None
+                            command=(lambda p=str(full_vid): self._play_video_by_path(p)) if exists else None
                         )
                         btn.pack(side="left", padx=(0, 4), pady=2)
                         
-        populate_column(col_a, record_a, record_b, pair_info.get("idx_a", 0) + 1)
-        populate_column(col_b, record_b, record_a, pair_info.get("idx_b", 0) + 1)
+        populate_column(col_a, record_a, record_b, pair_info.get("idx_a", 0) + 1, pair_info.get("idx_a", 0))
+        populate_column(col_b, record_b, record_a, pair_info.get("idx_b", 0) + 1, pair_info.get("idx_b", 0))
         
         # Bottom actions frame
         actions_frame = ctk.CTkFrame(popup, fg_color="transparent")
@@ -8488,18 +8596,72 @@ fi
             font=ctk.CTkFont(size=13, weight="bold")
         ).pack(pady=(0, 15))
 
-    def _open_media_file(self, file_path):
-        """Opens a media file (image or video) in the OS default viewer."""
-        import subprocess
+    def _show_image_by_path(self, path):
+        """Opens an image in the built-in image viewer popup by file path."""
+        try:
+            img = Image.open(path)
+        except Exception:
+            messagebox.showerror("Error", f"Could not open image:\n{path}")
+            return
+
+        popup = ctk.CTkToplevel(self)
+        popup.title("Image Viewer")
+        popup.configure(fg_color="#111")
+        popup.attributes("-topmost", True)
+
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        max_w = int(screen_w * 0.8)
+        max_h = int(screen_h * 0.8)
+        img.thumbnail((max_w, max_h), Image.LANCZOS)
+
+        popup.geometry(f"{img.width + 40}x{img.height + 100}")
+
+        ctk_photo = ctk.CTkImage(light_image=img, dark_image=img,
+                                  size=(img.width, img.height))
+        popup._photo_ref = ctk_photo
+
+        lbl = ctk.CTkLabel(popup, image=ctk_photo, text="")
+        lbl.pack(expand=True, fill="both", padx=10, pady=(10, 5))
+
+        ctk.CTkLabel(popup, text=Path(path).name, font=ctk.CTkFont(size=12),
+                     text_color="#aaa").pack(pady=(0, 5))
+
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(pady=(0, 10))
+
+        ctk.CTkButton(btn_frame, text="📂 Open File Location", width=140, height=30,
+                      fg_color="#2d6a4f", hover_color="#40916c",
+                      command=lambda: self._open_file_location(path)).pack(side="left", padx=(0, 8))
+
+        ctk.CTkButton(btn_frame, text="Close", width=100, height=30,
+                      command=popup.destroy).pack(side="left")
+
+    def _play_video_by_path(self, path_str):
+        """Opens a video file in the OS default video player."""
         try:
             if platform.system() == "Darwin":
-                subprocess.Popen(["open", file_path])
+                subprocess.call(('open', path_str))
             elif platform.system() == "Windows":
-                os.startfile(file_path)
+                os.startfile(path_str)
             else:
-                subprocess.Popen(["xdg-open", file_path])
+                subprocess.call(('xdg-open', path_str))
         except Exception as e:
-            messagebox.showerror("Error", f"Could not open file:\n{file_path}\n\n{e}")
+            messagebox.showerror("Error", f"Could not play video: {e}")
+
+    def _open_file_location(self, file_path):
+        """Opens the file explorer and highlights the given file."""
+        try:
+            file_path = Path(file_path)
+            folder = file_path.parent
+            if platform.system() == "Darwin":
+                subprocess.Popen(["open", "-R", str(file_path)])
+            elif platform.system() == "Windows":
+                subprocess.Popen(["explorer", "/select,", str(file_path)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not open file location:\n{e}")
 
     def _add_detail_field(self, parent, label_text, value_text, label_color=None):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
