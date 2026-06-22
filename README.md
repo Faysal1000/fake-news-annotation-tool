@@ -152,8 +152,12 @@ Fake News Dataset Annotator/
 │       └── sync/                   # Metrics sync
 │           └── global_sync.py      # Asynchronous team progress metrics Gist upload loop
 └── bot-server/                     # Telegram distribution bot server
-    ├── bot.py                      # Bot dispatcher and API actions
-    └── requirements.txt            # Telegram bot requirements
+    ├── telegram_bot.py             # Main bot execution logic (polling mode)
+    ├── setup_webhook.py            # Webhook registration script
+    ├── vercel.json                 # Vercel deployment configuration
+    ├── requirements.txt            # Telegram bot server requirements
+    └── api/
+        └── index.py                # Serverless webhook entry point for Vercel
 ```
 
 ### GitHub Actions CI/CD
