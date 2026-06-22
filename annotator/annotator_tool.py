@@ -2334,6 +2334,29 @@ class AnnotatorTool(ctk.CTk, dnd_base):
 
         save_config(annotator)
         self.status_label.configure(text=f"Entry saved successfully!", text_color="#2ecc71")
+        
+        # Add the new record to the in-memory list so duplicate checks include it
+        new_record = {
+            "id": entry_id,
+            "heading": heading,
+            "text": text,
+            "image_path": image_path_str,
+            "video_path": video_rel_path,
+            "label": label,
+            "multi_category": multi_cat,
+            "source": source,
+            "source_category": source_category,
+            "category": category,
+            "annotator": annotator,
+            "annotation_confidence": str(confidence),
+            "additional_notes": self.notes_entry.get("0.0", "end-1c").strip(),
+            "timestamp": datetime.now().isoformat(),
+        }
+        self.all_dataset_records.append(new_record)
+        
+        # Invalidate duplicate cache so it recomputes with the new record
+        self._duplicate_pairs_cache = None
+        
         self._update_stats()
         self._clear_fields()
         messagebox.showinfo("Save Complete", f"Entry saved successfully!\nID: {entry_id}")
@@ -3663,8 +3686,8 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         if not use_filtered or sub["Clickbait"] > 0:
             self._create_stat_badge(self.stats_frame, "Clickbait", sub["Clickbait"], "#f39c12")
             
-        # Duplicate audit badge (only in Review mode)
-        if self.current_mode == "review":
+        # Duplicate audit badge (in Review and Annotate modes)
+        if self.current_mode in ("review", "annotate"):
             if not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None:
                 self._compute_global_duplicates()
                 
@@ -3672,9 +3695,10 @@ class AnnotatorTool(ctk.CTk, dnd_base):
                 dup_count = "..."
             else:
                 unique_records_with_dups = set()
-                for pair in self._duplicate_pairs_cache:
-                    unique_records_with_dups.add(pair["idx_a"])
-                    unique_records_with_dups.add(pair["idx_b"])
+                if self._duplicate_pairs_cache is not None:
+                    for pair in self._duplicate_pairs_cache:
+                        unique_records_with_dups.add(pair["idx_a"])
+                        unique_records_with_dups.add(pair["idx_b"])
                 dup_count = len(unique_records_with_dups)
                 
             self._create_clickable_stat_badge(
@@ -4790,23 +4814,25 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         # Render the image previews and trigger placeholder graphics for missing files
         self._refresh_previews()
 
-        # Update the duplicate audit link in Review Mode
+        # Update the inline duplicate count warning
         if self.current_mode == "review":
-            self._update_review_mode_duplicate_count()
+            self._update_inline_duplicate_count()
 
-    def _custom_ask_yes_no_cancel(self, title, message):
-        popup = ctk.CTkToplevel(self)
+    def _custom_ask_yes_no_cancel(self, title, message, parent=None):
+        owner = parent or self
+        popup = ctk.CTkToplevel(owner)
         popup.title(title)
         w, h = 480, 240
         popup.configure(fg_color="#1a1a2e")
-        popup.attributes("-topmost", True)
-        popup.transient(self)
+        popup.transient(owner)
         
         popup.update_idletasks()
         sx = (popup.winfo_screenwidth() - w) // 2
         sy = (popup.winfo_screenheight() - h) // 2
         popup.geometry(f"{w}x{h}+{sx}+{sy}")
         
+        popup.lift()
+        popup.focus_force()
         popup.grab_set()
         
         result = [None]
@@ -4861,19 +4887,21 @@ class AnnotatorTool(ctk.CTk, dnd_base):
         self.wait_window(popup)
         return result[0]
 
-    def _custom_ask_yes_no(self, title, message):
-        popup = ctk.CTkToplevel(self)
+    def _custom_ask_yes_no(self, title, message, parent=None):
+        owner = parent or self
+        popup = ctk.CTkToplevel(owner)
         popup.title(title)
         w, h = 480, 240
         popup.configure(fg_color="#1a1a2e")
-        popup.attributes("-topmost", True)
-        popup.transient(self)
+        popup.transient(owner)
         
         popup.update_idletasks()
         sx = (popup.winfo_screenwidth() - w) // 2
         sy = (popup.winfo_screenheight() - h) // 2
         popup.geometry(f"{w}x{h}+{sx}+{sy}")
         
+        popup.lift()
+        popup.focus_force()
         popup.grab_set()
         
         result = [False]
@@ -7182,21 +7210,21 @@ fi
     def _on_heading_key_release(self, event=None):
         self._update_heading_search_visibility(event)
         if self.current_mode == "review":
-            self._schedule_review_dup_check(event)
+            self._schedule_inline_dup_check(event)
 
     def _on_text_key_release(self, event=None):
         if self.current_mode == "review":
-            self._schedule_review_dup_check(event)
+            self._schedule_inline_dup_check(event)
 
-    def _schedule_review_dup_check(self, event=None):
+    def _schedule_inline_dup_check(self, event=None):
         """
         Schedules a duplicate count update in Review Mode.
         """
         if self.current_mode != "review":
             return
-        if hasattr(self, "_review_dup_timer") and self._review_dup_timer:
-            self.after_cancel(self._review_dup_timer)
-        self._review_dup_timer = self.after(400, self._update_review_mode_duplicate_count)
+        if hasattr(self, "_inline_dup_timer") and self._inline_dup_timer:
+            self.after_cancel(self._inline_dup_timer)
+        self._inline_dup_timer = self.after(400, self._update_inline_duplicate_count)
 
     def _hide_duplicate_warnings(self):
         """
@@ -7220,6 +7248,7 @@ fi
                     reader = csv.DictReader(f)
                     for row in reader:
                         records.append(row)
+                self.all_dataset_records = records
             except Exception as e:
                 print(f"[WARNING] Failed to read dataset.csv for duplicate check: {e}")
         return records
@@ -7292,18 +7321,20 @@ fi
         matches.sort(key=lambda x: x["similarity"], reverse=True)
         return matches
 
-    def _update_review_mode_duplicate_count(self):
+    def _update_inline_duplicate_count(self):
         """
         Audits the current record in Review Mode against other records for duplicates.
         If duplicates exist, shows the clickable warning text next to the heading label.
         Calculates in the background using self.after to avoid freezing the UI.
         """
-        if self.current_mode != "review" or not self.dataset_records:
+        if self.current_mode != "review":
             self._hide_duplicate_warnings()
             return
             
-        record = self.dataset_records[self.current_review_index]
-        current_id = record.get("id")
+        current_id = None
+        if self.current_mode == "review" and self.dataset_records:
+            record = self.dataset_records[self.current_review_index]
+            current_id = record.get("id")
         current_heading = self._get_heading_text()
         current_text = self.text_box.get("1.0", "end-1c").strip()
         
@@ -7320,8 +7351,8 @@ fi
         self._current_record_matches = []
         
         # Set up check ID to track this specific request
-        self._current_review_dup_check_id = getattr(self, '_current_review_dup_check_id', 0) + 1
-        check_id = self._current_review_dup_check_id
+        self._current_inline_dup_check_id = getattr(self, '_current_inline_dup_check_id', 0) + 1
+        check_id = self._current_inline_dup_check_id
         
         records = self._get_all_records_for_dup_check()
         if not records:
@@ -7329,7 +7360,7 @@ fi
             return
             
         # Start asynchronous batch comparisons
-        self.after(5, lambda: self._process_review_dup_batch(
+        self.after(5, lambda: self._process_inline_dup_batch(
             check_id=check_id,
             records=records,
             current_heading=current_heading,
@@ -7339,9 +7370,9 @@ fi
             start_idx=0
         ))
 
-    def _process_review_dup_batch(self, check_id, records, current_heading, current_text, current_id, matches, start_idx):
+    def _process_inline_dup_batch(self, check_id, records, current_heading, current_text, current_id, matches, start_idx):
         # If user has moved to another record, abort this stale calculation
-        if getattr(self, '_current_review_dup_check_id', 0) != check_id:
+        if getattr(self, '_current_inline_dup_check_id', 0) != check_id:
             return
             
         n_records = len(records)
@@ -7428,7 +7459,7 @@ fi
                 })
                 
         # Schedule next batch
-        self.after(5, lambda: self._process_review_dup_batch(
+        self.after(5, lambda: self._process_inline_dup_batch(
             check_id=check_id,
             records=records,
             current_heading=current_heading,
@@ -7586,7 +7617,7 @@ fi
     def _duplicate_thread_worker(self):
         # We perform the heavy computation here
         try:
-            records = self.all_dataset_records
+            records = self._get_all_records_for_dup_check()
             n_records = len(records)
             
             # Pre-compute representation for all records
@@ -7797,27 +7828,50 @@ fi
         self._update_stats()
 
 
-    def _show_global_duplicate_audit(self, page=0):
-        if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
-            messagebox.showinfo("Analysis in Progress", "Duplicate scan is currently running in the background. Please wait until it completes.")
-            return
-        # If not computed yet, initialize to empty
-        if not hasattr(self, '_duplicate_pairs_cache'):
+    def _show_global_duplicate_audit(self, start_page=0):
+        page = start_page
+        cache_is_missing = not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None
+        is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
+        
+        if cache_is_missing and not is_computing:
+            self._compute_global_duplicates()
+            is_computing = True
+            
+        if cache_is_missing:
             self._duplicate_pairs_cache = []
-        if not hasattr(self, '_raw_duplicate_pairs_cache'):
             self._raw_duplicate_pairs_cache = []
             
         popup = ctk.CTkToplevel(self)
         popup.title("Global Duplicate Audit")
         w, h = 900, 620
         popup.configure(fg_color="#1a1a2e")
-        popup.attributes("-topmost", True)
+        popup.transient(self)
         
         # Center on screen
         popup.update_idletasks()
         sx = (popup.winfo_screenwidth() - w) // 2
         sy = (popup.winfo_screenheight() - h) // 2
         popup.geometry(f"{w}x{h}+{sx}+{sy}")
+        
+        if is_computing:
+            # Show a loading screen that polls until it's done
+            loading_lbl = ctk.CTkLabel(
+                popup, text="🔄 Recalculating duplicates...\nPlease wait.",
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color="#f39c12"
+            )
+            loading_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            
+            def check_computing():
+                if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+                    if popup.winfo_exists():
+                        popup.after(200, check_computing)
+                else:
+                    if popup.winfo_exists():
+                        popup.destroy()
+                        self._show_global_duplicate_audit(start_page)
+            check_computing()
+            return
         
         # Header
         header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
@@ -7829,7 +7883,7 @@ fi
         
         ctk.CTkLabel(
             header_inner,
-            text=f"⚠️ Global Duplicate Audit — {len(self._duplicate_pairs_cache)} Potential Duplicates",
+            text=f"⚠️ Global Duplicate Audit — {len(self._duplicate_pairs_cache or [])} Potential Duplicates",
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color="#f39c12"
         ).pack(side="left")
@@ -7901,10 +7955,11 @@ fi
                 command=lambda: [self._unmark_all_non_duplicates(), popup.destroy(), self._show_global_duplicate_audit(page)]
             ).pack(side="left")
             
-        cache_to_show = self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache
+        cache_to_show = (self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache) or []
         
         PAGE_SIZE = 50
         total_pages = max(1, (len(cache_to_show) + PAGE_SIZE - 1) // PAGE_SIZE)
+        page = max(0, min(page, total_pages - 1))
         
         # Scrollable list of matches
         scroll_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
@@ -8050,9 +8105,10 @@ fi
         popup.title("Side-by-Side Comparison")
         w, h = 1100, 680
         popup.configure(fg_color="#1a1a2e")
-        popup.attributes("-topmost", True)
         if parent_popup:
             popup.transient(parent_popup)
+        else:
+            popup.transient(self)
         
         # Center on screen
         popup.update_idletasks()
@@ -8135,13 +8191,19 @@ fi
             def delete_record(record, record_label):
                 """Delete a specific record by ID after confirmation."""
                 record_id = record.get("id", "")
-                heading_preview = (record.get("heading", "") or "")[:60]
+                
+                # Use heading for preview, fallback to text if empty
+                heading_preview = (record.get("heading", "") or "").strip()
+                if not heading_preview:
+                    heading_preview = (record.get("text", "") or "").strip()
+                heading_preview = heading_preview[:60]
                 
                 confirm = self._custom_ask_yes_no(
                     "Confirm Delete",
                     f"Are you sure you want to delete Record #{record_label}?\n\n"
-                    f"\"{heading_preview}{'...' if len(record.get('heading', '') or '') > 60 else ''}\"\n\n"
-                    "This action cannot be undone."
+                    f"\"{heading_preview}{'...' if len(heading_preview) == 60 else ''}\"\n\n"
+                    "This action cannot be undone.",
+                    parent=popup
                 )
                 if not confirm:
                     return
