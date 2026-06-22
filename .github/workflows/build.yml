@@ -53,7 +53,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: bash
         run: |
-          VERSION_JSON=$(grep -o '"version": *"[^"]*"' annotator/version.json | cut -d '"' -f 4)
+          VERSION_JSON=$(grep -o '"version": *"[^"]*"' annotator/src/version.json | cut -d '"' -f 4)
           if [ "$VERSION_JSON" != "${{ github.ref_name }}" ]; then
             echo "Error: GitHub tag (${{ github.ref_name }}) does not match version.json ($VERSION_JSON)"
             exit 1

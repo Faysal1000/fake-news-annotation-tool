@@ -6,11 +6,11 @@ A standalone GUI tool for collecting a multimodal fake news detection dataset. M
 
 <br>
 <p align="center">
-  <img src="annotator/assets/annotate_mode.png" alt="Fake News Annotator - Annotate Mode" width="600">
+  <img src="assets/annotate_mode.png" alt="Fake News Annotator - Annotate Mode" width="600">
 </p>
 <p align="center">
-  <img src="annotator/assets/review_mode.png" alt="Fake News Annotator - Review Mode" width="380">
-  <img src="annotator/assets/re-label_mode.png" alt="Fake News Annotator - Re-label Mode" width="380">
+  <img src="assets/review_mode.png" alt="Fake News Annotator - Review Mode" width="380">
+  <img src="assets/re-label_mode.png" alt="Fake News Annotator - Re-label Mode" width="380">
 </p>
 
 ---
@@ -99,11 +99,65 @@ cd annotator
 pip install -r requirements.txt
 
 # Run the tool
-python annotator_tool.py
+python main.py
+```
+
+### Repository Structure
+
+```
+Fake News Dataset Annotator/
+├── .github/
+│   └── workflows/
+│       └── build.yml               # GitHub Actions CI/CD automated release builder
+├── annotator/                      # Main desktop annotation application
+│   ├── main.py                     # Entry point (adds src/ to path, launches application)
+│   ├── build.py                    # PyInstaller standalone compiler script
+│   ├── requirements.txt            # Desktop application package requirements
+│   └── src/                        # Desktop application source directory
+│       ├── bootstrap.py            # Verifies dependencies and tkinterdnd2 dynamically
+│       ├── app_paths.py            # Static directory and file location resolvers
+│       ├── constants.py            # Application options, categories, and labels config
+│       ├── version.json            # Version tracker file (v12.0.0)
+│       ├── assets/                 # App icon files (.icns/.ico/.svg/.png) & media badges
+│       ├── data/                   # Dataset CSV I/O, config files, and statistics engines
+│       │   ├── csv_manager.py      # Handles CSV database schemas & file migrations
+│       │   ├── config_manager.py   # Reads/writes annotator local config file
+│       │   └── stats_engine.py     # Calculates dataset counts (items, images, videos)
+│       ├── analysis/               # Analytical agreement and data aggregation utilities
+│       │   ├── text_similarity.py  # Text cleaning & Jaccard/containment checks
+│       │   ├── kappa.py            # Pairwise Cohen & Fleiss Kappa calculators
+│       │   └── aggregator.py       # Combines multiple annotators' datasets and generates samples
+│       ├── ui/                     # Interface builders, dialogs, panels, and custom widgets
+│       │   ├── main_window.py      # App orchestrator class and mixins multiple inheritance
+│       │   ├── build_ui.py         # Constructs and positions CTk layout frames/grids
+│       │   ├── stats_popup.py      # Full detailed stats interactive popup window
+│       │   ├── duplicate_popup.py  # Interactive side-by-side duplicate comparison modal
+│       │   ├── filter_panel.py     # Advanced search filter query criteria dialog
+│       │   ├── scripts_popup.py    # Merging datasets & generating agreement samples launcher
+│       │   ├── dialogs.py          # Custom CTk confirmation yes/no/cancel modals
+│       │   └── widgets.py          # FlowFrame wrapping container class
+│       ├── modes/                  # Screen views layout managers
+│       │   ├── mode_controller.py  # Manages toggle transitions between modes
+│       │   ├── annotate_mode.py    # Save & validate entry view
+│       │   ├── review_mode.py      # Pagination, updates, and deletion review view
+│       │   └── relabel_mode.py     # blind inter-annotator Kappa ratings view
+│       ├── duplicates/             # Inline & global audits
+│       │   └── duplicate_engine.py # Background duplicate auditing thread & inline counts badge
+│       ├── media/                  # Video & Audio playback
+│       │   └── media_manager.py    # Previews, saves, and scales attached graphics & clips
+│       ├── shortcuts/              # Hotkeys
+│       │   └── keyboard.py         # Binds hotkey triggers (Ctrl+S, Ctrl+Arrows, etc.)
+│       ├── updater/                # Auto-updates
+│       │   └── update_manager.py   # Asynchronously checks release updates and runs installers
+│       └── sync/                   # Metrics sync
+│           └── global_sync.py      # Asynchronous team progress metrics Gist upload loop
+└── bot-server/                     # Telegram distribution bot server
+    ├── bot.py                      # Bot dispatcher and API actions
+    └── requirements.txt            # Telegram bot requirements
 ```
 
 ### GitHub Actions CI/CD
-The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) that automatically builds executables for all platforms. Push a version tag (e.g., `git tag v1.0.0 && git push --tags`) to trigger a build and create a GitHub Release.
+The project includes a GitHub Actions workflow (`.github/workflows/build.yml`) that automatically builds executables for all platforms. Push a version tag (e.g., `git tag v12.0.0 && git push --tags`) to trigger a build and create a GitHub Release.
 
 ---
 

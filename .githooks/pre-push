@@ -4,10 +4,10 @@ while read local_ref local_sha remote_ref remote_sha; do
     if [[ $remote_ref == refs/tags/* ]]; then
         TAG_NAME=${remote_ref#refs/tags/}
         # Read version.json exactly as it exists in the commit being tagged
-        VERSION_JSON=$(git show "$local_sha:annotator/version.json" 2>/dev/null | grep -o '"version": *"[^"]*"' | cut -d '"' -f 4)
+        VERSION_JSON=$(git show "$local_sha:annotator/src/version.json" 2>/dev/null | grep -o '"version": *"[^"]*"' | cut -d '"' -f 4)
         
         if [ "$TAG_NAME" != "$VERSION_JSON" ]; then
-            echo "🛑 ERROR: You are pushing tag '$TAG_NAME', but annotator/version.json says '$VERSION_JSON'."
+            echo "🛑 ERROR: You are pushing tag '$TAG_NAME', but annotator/src/version.json says '$VERSION_JSON'."
             echo "Please update version.json to match the tag before pushing!"
             exit 1
         fi

@@ -32,18 +32,31 @@ def build():
     sep = ";" if platform.system() == "Windows" else ":"
     icon_ext = "icns" if platform.system() == "Darwin" else "ico"
 
+    # Absolute paths for bundling
+    version_path = str(script_dir / "src" / "version.json")
+    assets_path = str(script_dir / "src" / "assets")
+    icon_path = str(script_dir / "src" / "assets" / f"app_icon.{icon_ext}")
+    dist_path = str(script_dir / "dist")
+    work_path = str(script_dir / "build")
+    spec_path = str(script_dir)
+    main_path = str(script_dir / "main.py")
+
     # Base PyInstaller command
     cmd = [
         sys.executable, "-m", "PyInstaller",
         "--name", "FakeNewsAnnotator",     # Name of the output executable
         "--windowed",                       # No console window (GUI app)
         mode,                               # --onedir for Mac, --onefile for Win/Linux
-        f"--icon=assets/app_icon.{icon_ext}", # App icon
-        f"--add-data=version.json{sep}.",   # Include version.json in bundle
-        f"--add-data=assets{sep}assets",    # Include assets directory (icons, badges) in bundle
+        f"--icon={icon_path}",              # App icon
+        f"--add-data={version_path}{sep}.",   # Include version.json in bundle
+        f"--add-data={assets_path}{sep}assets",    # Include assets directory (icons, badges) in bundle
+        f"--paths={script_dir / 'src'}",            # Add src to PyInstaller path
+        f"--distpath={dist_path}",                  # Output dist directory
+        f"--workpath={work_path}",                 # Output build directory
+        f"--specpath={spec_path}",                       # Output spec directory
         "--noconfirm",                      # Overwrite previous build without asking
         "--clean",                          # Clean cache before building
-        "annotator_tool.py",               # The main script to bundle
+        main_path,                          # The entry point script to bundle
     ]
 
     print(f"Building for {platform.system()} ({platform.machine()})...")
