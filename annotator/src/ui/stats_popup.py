@@ -481,9 +481,13 @@ class StatsMixin:
                                         category_menu, annotator_menu, option_provider):
         """
         Keeps detailed dashboard filters aligned with the selected metrics scope.
-        Category filtering is now supported in both local and global modes.
+        Uses cascading logic: selecting one filter narrows the other's options.
         """
-        category_options, annotator_options = option_provider(is_global)
+        current_category = category_var.get()
+        current_annotator = annotator_var.get()
+        category_options, annotator_options = option_provider(
+            is_global, selected_category=current_category, selected_annotator=current_annotator
+        )
 
         category_values = category_options
         category_state = "normal"
@@ -524,63 +528,136 @@ class StatsMixin:
 
         all_records = self._get_records_for_detailed_stats()
         global_annotator_filter_map = {}
-
-        def _global_annotator_options():
-            entries = []
-            name_counts = {}
-            global_annotator_filter_map.clear()
-
-            for machine_uuid, machine_data in self.global_metrics_data.items():
-                if not isinstance(machine_data, dict):
-                    continue
-                for ann_name, ann_stats in machine_data.items():
-                    ann_label = str(ann_name).strip()
-                    if isinstance(ann_stats, dict) and ann_label:
-                        entries.append((ann_label, str(machine_uuid)))
-                        name_counts[ann_label] = name_counts.get(ann_label, 0) + 1
-
-            options = []
-            for ann_label, machine_uuid in sorted(entries):
-                if name_counts.get(ann_label, 0) > 1:
-                    option_label = f"{ann_label}-{machine_uuid[-8:]}"
-                else:
-                    option_label = ann_label
-                global_annotator_filter_map[option_label] = (ann_label, machine_uuid)
-                options.append(option_label)
-            return options
-
-        def _dashboard_filter_options(is_global=False):
+        def _dashboard_filter_options(is_global=False, selected_category="All Categories",
+                                      selected_annotator="All Annotators"):
+            """
+            Builds cascading filter options. When one filter is set, the other
+            dropdown is narrowed to only show relevant matching options.
+            """
             if is_global:
-                # Extract categories from _categories keys across all machines/annotators
-                global_cats = set()
+                # --- Build raw data map: {(ann_label, machine_uuid): set of categories} ---
+                annotator_cats_map = {}  # option_label -> set of category names
+                cat_annotators_map = {}  # category_name -> set of option_labels
+                
+                entries = []
+                name_counts = {}
+                global_annotator_filter_map.clear()
+                
                 for machine_uuid, machine_data in self.global_metrics_data.items():
                     if not isinstance(machine_data, dict):
                         continue
                     for ann_name, ann_stats in machine_data.items():
                         if not isinstance(ann_stats, dict):
                             continue
+                        ann_label = str(ann_name).strip()
+                        if not ann_label:
+                            continue
+                        entries.append((ann_label, str(machine_uuid)))
+                        name_counts[ann_label] = name_counts.get(ann_label, 0) + 1
+                
+                # Build option labels and the filter map
+                option_labels_by_key = {}  # (ann_label, machine_uuid) -> option_label
+                for ann_label, machine_uuid in sorted(entries):
+                    if name_counts.get(ann_label, 0) > 1:
+                        option_label = f"{ann_label}-{machine_uuid[-8:]}"
+                    else:
+                        option_label = ann_label
+                    global_annotator_filter_map[option_label] = (ann_label, machine_uuid)
+                    option_labels_by_key[(ann_label, machine_uuid)] = option_label
+                
+                # Now build the category <-> annotator mappings
+                for machine_uuid, machine_data in self.global_metrics_data.items():
+                    if not isinstance(machine_data, dict):
+                        continue
+                    for ann_name, ann_stats in machine_data.items():
+                        if not isinstance(ann_stats, dict):
+                            continue
+                        ann_label = str(ann_name).strip()
+                        if not ann_label:
+                            continue
+                        option_label = option_labels_by_key.get((ann_label, str(machine_uuid)))
+                        if not option_label:
+                            continue
+                        
                         categories_data = ann_stats.get("_categories")
                         if isinstance(categories_data, dict):
+                            cats_for_ann = set()
                             for cat_key in categories_data:
                                 if cat_key != "_uncategorized":
-                                    global_cats.add(cat_key)
-                preferred_categories = [c for c in CATEGORIES if c and c in global_cats]
-                extra_categories = sorted(global_cats - set(preferred_categories))
+                                    cats_for_ann.add(cat_key)
+                                    if cat_key not in cat_annotators_map:
+                                        cat_annotators_map[cat_key] = set()
+                                    cat_annotators_map[cat_key].add(option_label)
+                            annotator_cats_map[option_label] = cats_for_ann
+                        else:
+                            # Old format: this annotator has no category info
+                            # They appear in all category filters (can't be narrowed)
+                            annotator_cats_map[option_label] = None  # None = all categories
+                
+                # Build category dropdown (narrowed by selected annotator)
+                all_global_cats = set()
+                for cats in annotator_cats_map.values():
+                    if cats is not None:
+                        all_global_cats.update(cats)
+                
+                if selected_annotator != "All Annotators":
+                    ann_cats = annotator_cats_map.get(selected_annotator)
+                    if ann_cats is not None:
+                        visible_cats = ann_cats
+                    else:
+                        # Old format annotator: show all categories
+                        visible_cats = all_global_cats
+                else:
+                    visible_cats = all_global_cats
+                
+                preferred_categories = [c for c in CATEGORIES if c and c in visible_cats]
+                extra_categories = sorted(visible_cats - set(preferred_categories))
                 category_values = ["All Categories"] + preferred_categories + extra_categories
-                annotator_values = ["All Annotators"] + _global_annotator_options()
+                
+                # Build annotator dropdown (narrowed by selected category)
+                if selected_category != "All Categories":
+                    # Show annotators who have this category OR have no category data (old format)
+                    visible_annotators = []
+                    for opt_label in sorted(annotator_cats_map.keys()):
+                        ann_cats = annotator_cats_map[opt_label]
+                        if ann_cats is None or selected_category in ann_cats:
+                            visible_annotators.append(opt_label)
+                else:
+                    visible_annotators = sorted(annotator_cats_map.keys())
+                
+                annotator_values = ["All Annotators"] + visible_annotators
             else:
+                # --- LOCAL MODE: cascade using raw records ---
+                # Narrow categories based on selected annotator
+                if selected_annotator != "All Annotators":
+                    scoped_records = [
+                        r for r in all_records
+                        if (r.get("annotator") or "").strip() == selected_annotator
+                    ]
+                else:
+                    scoped_records = all_records
+                
                 local_categories = {
                     (r.get("category") or "").strip()
-                    for r in all_records
+                    for r in scoped_records
                     if (r.get("category") or "").strip()
                 }
-                preferred_categories = [c for c in CATEGORIES if c]
+                preferred_categories = [c for c in CATEGORIES if c and c in local_categories]
                 extra_categories = sorted(local_categories - set(preferred_categories))
                 category_values = ["All Categories"] + preferred_categories + extra_categories
 
+                # Narrow annotators based on selected category
+                if selected_category != "All Categories":
+                    cat_records = [
+                        r for r in all_records
+                        if (r.get("category") or "").strip() == selected_category
+                    ]
+                else:
+                    cat_records = all_records
+                
                 local_annotators = {
                     (r.get("annotator") or "").strip()
-                    for r in all_records
+                    for r in cat_records
                     if (r.get("annotator") or "").strip()
                 }
                 annotator_values = ["All Annotators"] + sorted(local_annotators)
@@ -592,7 +669,11 @@ class StatsMixin:
         
         ctk.CTkLabel(top_frame, text="Filter:", font=ctk.CTkFont(size=14, weight="bold"), text_color="#cdd6f4").pack(side="left", padx=(0, 10))
         
-        category_options, annotator_options = _dashboard_filter_options(self.global_metrics_enabled.get())
+        category_options, annotator_options = _dashboard_filter_options(
+            self.global_metrics_enabled.get(),
+            selected_category="All Categories",
+            selected_annotator="All Annotators"
+        )
         category_var = ctk.StringVar(value="All Categories")
         annotator_var = ctk.StringVar(value="All Annotators")
         category_menu = None
