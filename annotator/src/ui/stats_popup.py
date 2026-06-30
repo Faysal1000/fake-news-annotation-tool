@@ -481,28 +481,21 @@ class StatsMixin:
                                         category_menu, annotator_menu, option_provider):
         """
         Keeps detailed dashboard filters aligned with the selected metrics scope.
-        Category filtering is local-only because the Gist stores aggregate team metrics.
+        Category filtering is now supported in both local and global modes.
         """
         category_options, annotator_options = option_provider(is_global)
 
-        if is_global:
+        category_values = category_options
+        category_state = "normal"
+        if category_var.get() not in category_values:
             category_var.set("All Categories")
-            category_values = ["All Categories"]
-            category_state = "disabled"
-        else:
-            category_values = category_options
-            category_state = "normal"
-            if category_var.get() not in category_values:
-                category_var.set("All Categories")
 
         if annotator_var.get() not in annotator_options:
             annotator_var.set("All Annotators")
 
         if category_menu is not None:
             category_menu.configure(values=category_values, state=category_state)
-            if is_global:
-                category_menu.pack_forget()
-            elif not category_menu.winfo_manager():
+            if not category_menu.winfo_manager():
                 if annotator_menu is not None:
                     category_menu.pack(side="left", padx=(0, 10), before=annotator_menu)
                 else:
@@ -557,23 +550,39 @@ class StatsMixin:
             return options
 
         def _dashboard_filter_options(is_global=False):
-            local_categories = {
-                (r.get("category") or "").strip()
-                for r in all_records
-                if (r.get("category") or "").strip()
-            }
-            preferred_categories = [c for c in CATEGORIES if c]
-            extra_categories = sorted(local_categories - set(preferred_categories))
-            category_values = ["All Categories"] + preferred_categories + extra_categories
-
-            local_annotators = {
-                (r.get("annotator") or "").strip()
-                for r in all_records
-                if (r.get("annotator") or "").strip()
-            }
             if is_global:
+                # Extract categories from _categories keys across all machines/annotators
+                global_cats = set()
+                for machine_uuid, machine_data in self.global_metrics_data.items():
+                    if not isinstance(machine_data, dict):
+                        continue
+                    for ann_name, ann_stats in machine_data.items():
+                        if not isinstance(ann_stats, dict):
+                            continue
+                        categories_data = ann_stats.get("_categories")
+                        if isinstance(categories_data, dict):
+                            for cat_key in categories_data:
+                                if cat_key != "_uncategorized":
+                                    global_cats.add(cat_key)
+                preferred_categories = [c for c in CATEGORIES if c and c in global_cats]
+                extra_categories = sorted(global_cats - set(preferred_categories))
+                category_values = ["All Categories"] + preferred_categories + extra_categories
                 annotator_values = ["All Annotators"] + _global_annotator_options()
             else:
+                local_categories = {
+                    (r.get("category") or "").strip()
+                    for r in all_records
+                    if (r.get("category") or "").strip()
+                }
+                preferred_categories = [c for c in CATEGORIES if c]
+                extra_categories = sorted(local_categories - set(preferred_categories))
+                category_values = ["All Categories"] + preferred_categories + extra_categories
+
+                local_annotators = {
+                    (r.get("annotator") or "").strip()
+                    for r in all_records
+                    if (r.get("annotator") or "").strip()
+                }
                 annotator_values = ["All Annotators"] + sorted(local_annotators)
             return category_values, annotator_values
 
@@ -635,6 +644,8 @@ class StatsMixin:
         
         # Active subset data for CSV export
         active_export_data = []
+        # Toggle for including teammates without category data
+        include_uncategorized_var = ctk.BooleanVar(value=False)
 
         def draw_dashboard(*args):
             nonlocal active_export_data
@@ -668,7 +679,11 @@ class StatsMixin:
                 # Build stats by aggregating from self.global_metrics_data
                 stats = self._empty_detailed_stats()
                 found_any = False
+                machines_without_categories = 0
+                total_annotator_entries = 0
                 selected_global_entry = global_annotator_filter_map.get(selected_annotator)
+                filtering_by_category = selected_category != "All Categories"
+
                 for machine_uuid, machine_data in self.global_metrics_data.items():
                     if not isinstance(machine_data, dict):
                         continue
@@ -683,8 +698,27 @@ class StatsMixin:
                             if ann_label != selected_name or str(machine_uuid) != selected_machine_uuid:
                                 continue
 
-                        if self._merge_detailed_stats(stats, ann_stats):
-                            found_any = True
+                        total_annotator_entries += 1
+                        categories_data = ann_stats.get("_categories")
+                        has_categories = isinstance(categories_data, dict) and len(categories_data) > 0
+
+                        if filtering_by_category:
+                            if has_categories:
+                                # New format: extract specific category stats
+                                cat_stats = categories_data.get(selected_category)
+                                if cat_stats and self._merge_detailed_stats(stats, cat_stats):
+                                    found_any = True
+                            else:
+                                # Old format: no category data — count them but exclude by default
+                                machines_without_categories += 1
+                                if include_uncategorized_var.get():
+                                    # User opted in to include unfiltered stats
+                                    if self._merge_detailed_stats(stats, ann_stats):
+                                        found_any = True
+                        else:
+                            # All Categories: merge top-level stats as before
+                            if self._merge_detailed_stats(stats, ann_stats):
+                                found_any = True
                 
                 if not found_any:
                     empty_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
@@ -732,6 +766,37 @@ class StatsMixin:
                     return
 
                 stats = self._compute_detailed_stats_for_records(filtered_records)
+
+            # --- PARTIAL DATA WARNING (global mode with category filter) ---
+            if is_global and filtering_by_category and machines_without_categories > 0:
+                warn_frame = ctk.CTkFrame(dash_container, fg_color="#3d2e1e", corner_radius=8,
+                                          border_width=1, border_color="#e67e22")
+                warn_frame.pack(fill="x", padx=24, pady=(10, 0))
+
+                warn_inner = ctk.CTkFrame(warn_frame, fg_color="transparent")
+                warn_inner.pack(fill="x", padx=12, pady=8)
+
+                plural = "s" if machines_without_categories > 1 else ""
+                excluded_text = "excluded" if not include_uncategorized_var.get() else "included (unfiltered)"
+                ctk.CTkLabel(
+                    warn_inner,
+                    text=f"⚠️  {machines_without_categories} teammate{plural} don't have category data — {excluded_text}.",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color="#fab387"
+                ).pack(side="left")
+
+                def toggle_include_uncategorized():
+                    include_uncategorized_var.set(not include_uncategorized_var.get())
+                    draw_dashboard()
+
+                btn_text = "Exclude Them" if include_uncategorized_var.get() else "Include Them"
+                btn_color = "#e74c3c" if include_uncategorized_var.get() else "#4f46e5"
+                btn_hover = "#c0392b" if include_uncategorized_var.get() else "#5c5cff"
+                ctk.CTkButton(
+                    warn_inner, text=btn_text, command=toggle_include_uncategorized,
+                    width=120, height=26, font=ctk.CTkFont(size=12, weight="bold"),
+                    fg_color=btn_color, hover_color=btn_hover, corner_radius=6
+                ).pack(side="right", padx=(10, 0))
 
             # --- SUMMARY CARDS ---
             cards_frame = ctk.CTkFrame(dash_container, fg_color="transparent")
@@ -935,31 +1000,29 @@ class StatsMixin:
                     
                     vertical_pct = None
                     horizontal_pct = None
-                    if row_idx > 1 and val > 0:
-                        # --- Vertical Calculation ---
-                        v_denom = 0
-                        
-                        # Sum up all modality items for this column to ensure vertical percentages sum to 100%
-                        # excluding items that have no text, image, or video.
-                        modality_sum = sum(stats[col_key][m] for m in [
-                            "Text Only", "Image Only", "Video Only", 
-                            "Text + Image", "Text + Video", "Image + Video", 
-                            "Text + Image + Video"
-                        ])
-                        
-                        if col_key in ["Real", "Fake"]:
-                            v_denom = modality_sum
-                        elif col_key in ["Misinfo", "Satire", "Clickbait"]:
-                            # For subclasses, we want their vertical sum to add up to 100% of their own modality sum
-                            # Wait, the prompt says "won't it be 100%". 
-                            # If col is Misinfo, then v_denom = Misinfo modality_sum.
-                            # So Misinfo modalities sum to 100% of Misinfo.
-                            v_denom = modality_sum
+                    if val > 0:
+                        if row_idx > 1:
+                            # --- Vertical Calculation (modality distribution) ---
+                            v_denom = 0
                             
-                        if v_denom > 0:
-                            vertical_pct = int(round((val / v_denom) * 100))
+                            # Sum up all modality items for this column to ensure vertical percentages sum to 100%
+                            # excluding items that have no text, image, or video.
+                            modality_sum = sum(stats[col_key][m] for m in [
+                                "Text Only", "Image Only", "Video Only", 
+                                "Text + Image", "Text + Video", "Image + Video", 
+                                "Text + Image + Video"
+                            ])
                             
-                        # --- Horizontal Calculation ---
+                            if col_key in ["Real", "Fake"]:
+                                v_denom = modality_sum
+                            elif col_key in ["Misinfo", "Satire", "Clickbait"]:
+                                # For subclasses, we want their vertical sum to add up to 100% of their own modality sum
+                                v_denom = modality_sum
+                                
+                            if v_denom > 0:
+                                vertical_pct = int(round((val / v_denom) * 100))
+                            
+                        # --- Horizontal Calculation (runs for ALL rows including Total Items) ---
                         h_denom = 0
                         if col_key in ["Real", "Fake"]:
                             h_denom = stats["Total"][metric_name]
@@ -1200,6 +1263,8 @@ class StatsMixin:
                     target[col_name][metric_name] += int(subset_metrics.get(metric_name, 0) or 0)
                 except (TypeError, ValueError):
                     continue
+        # Note: _categories key is intentionally skipped here — it's a nested
+        # dict of per-category stats, not a stats column to merge.
         return recognized
 
     def _redraw_active_detailed_popup(self):
@@ -1221,8 +1286,11 @@ class StatsMixin:
     def _calculate_grouped_local_stats(self):
         """
         Reads dataset.csv and groups detailed metrics by annotator name.
+        Also computes per-category breakdowns under a '_categories' key
+        for each annotator, enabling category filtering in global metrics.
         """
         grouped_records = {}
+        grouped_by_cat = {}  # (annotator, category) -> [rows]
         if not CSV_PATH.exists() or CSV_PATH.stat().st_size == 0:
             return {}
         
@@ -1230,12 +1298,28 @@ class StatsMixin:
             reader = csv.DictReader(f)
             for row in reader:
                 ann = (row.get("annotator") or "").strip() or "Unknown"
+                cat = (row.get("category") or "").strip() or "_uncategorized"
+                
                 if ann not in grouped_records:
                     grouped_records[ann] = []
                 grouped_records[ann].append(row)
                 
-        return {
-            ann: self._compute_detailed_stats_for_records(records)
-            for ann, records in grouped_records.items()
-        }
+                key = (ann, cat)
+                if key not in grouped_by_cat:
+                    grouped_by_cat[key] = []
+                grouped_by_cat[key].append(row)
+                
+        result = {}
+        for ann, records in grouped_records.items():
+            # Top-level stats (backward compatible — kept as-is)
+            ann_stats = self._compute_detailed_stats_for_records(records)
+            # Per-category breakdown
+            categories_stats = {}
+            for (a, cat), cat_records in grouped_by_cat.items():
+                if a == ann:
+                    categories_stats[cat] = self._compute_detailed_stats_for_records(cat_records)
+            ann_stats["_categories"] = categories_stats
+            result[ann] = ann_stats
+        
+        return result
 
