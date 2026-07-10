@@ -50,10 +50,15 @@ class ModeControllerMixin:
             # Set the internal state indicator to annotate mode
             self.current_mode = "annotate"
             
-            # Hide navigation panels and filter settings widgets from the top bar
+            # Hide navigation panels and filter/search settings widgets from the top bar
             self.nav_frame.grid_forget()
             self.filter_btn.pack_forget()
             self.filter_indicator.pack_forget()
+            self.search_btn.pack_forget()
+            
+            # Hide UUID display and restore category stats in Annotate mode
+            self.uuid_display_frame.pack_forget()
+            self.category_stats_frame.pack(fill="x", pady=(0, 6), after=self.stats_frame)
             
             # Configure primary button to trigger entry save logic
             self.primary_btn.configure(text="💾  Save Entry", command=self._save_entry)
@@ -116,11 +121,16 @@ class ModeControllerMixin:
                                           fg_color="#e74c3c", hover_color="#c0392b")
             self.secondary_btn.pack(side="left")
             
-            # Make the record navigation bar and filter widgets visible
+            # Make the record navigation bar, filter, and search widgets visible
             self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
             self.filter_btn.pack(side="right", padx=(4, 0))
             self.filter_indicator.pack(side="right", padx=(4, 0))
+            self.search_btn.pack(side="right", padx=(4, 0))
             self._update_filter_indicator()
+            
+            # Hide category stats and show UUID display in Review mode
+            self.category_stats_frame.pack_forget()
+            self.uuid_display_frame.pack(fill="x", pady=(0, 6), after=self.stats_frame)
             
         # Case 3: Switching to Re-label (Kappa reliability check) Mode
         elif "Re-label" in mode_name:

@@ -24,6 +24,7 @@ from ui.stats_popup import StatsMixin
 from ui.scripts_popup import ScriptsMixin
 from duplicates.duplicate_engine import DuplicateEngineMixin
 from ui.duplicate_popup import DuplicateUIMixin
+from ui.search_popup import SearchUIMixin
 from updater.update_manager import UpdateMixin
 from sync.global_sync import GlobalSyncMixin
 from ui.dialogs import DialogMixin
@@ -48,6 +49,7 @@ class AnnotatorTool(
     ScriptsMixin,
     DuplicateEngineMixin,
     DuplicateUIMixin,
+    SearchUIMixin,
     UpdateMixin,
     GlobalSyncMixin,
     DialogMixin,

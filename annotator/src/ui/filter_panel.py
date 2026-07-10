@@ -191,9 +191,16 @@ class FilterMixin:
         y = self.winfo_y() + (self.winfo_height() // 2) - (ph // 2)
         popup.geometry(f"+{x}+{y}")
 
-        # Section Header Label
-        ctk.CTkLabel(popup, text="🔽 Filter Settings",
-                     font=ctk.CTkFont(size=18, weight="bold")).pack(pady=(12, 6))
+        # Section Header Title Frame with Icon
+        header_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        header_frame.pack(pady=(12, 6))
+        
+        filter_icon = getattr(self, "filter_icon", None)
+        if filter_icon:
+            ctk.CTkLabel(header_frame, text="", image=filter_icon).pack(side="left", padx=(0, 6))
+            ctk.CTkLabel(header_frame, text="Filter Settings", font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
+        else:
+            ctk.CTkLabel(header_frame, text="🔽 Filter Settings", font=ctk.CTkFont(size=18, weight="bold")).pack(side="left")
 
         # Scrollable container supporting vertical layout overflows
         scroll = ctk.CTkScrollableFrame(popup, fg_color="transparent")

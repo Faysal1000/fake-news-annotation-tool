@@ -44,9 +44,37 @@ class UIBuilderMixin:
                                               font=ctk.CTkFont(size=12),
                                               text_color="#f39c12")
         
-        self.filter_btn = ctk.CTkButton(top_bar, text="🔍 Filter", command=self._show_filter_popup,
-                                         width=80, height=32,
-                                         font=ctk.CTkFont(size=13),
+        # Load Filter icon
+        self.filter_icon = None
+        filter_icon_path = ASSETS_DIR / "filter_icon.png"
+        if filter_icon_path.exists():
+            try:
+                f_img = Image.open(filter_icon_path)
+                try:
+                    resample_filter = Image.Resampling.LANCZOS
+                except AttributeError:
+                    try:
+                        resample_filter = Image.LANCZOS
+                    except AttributeError:
+                        resample_filter = Image.ANTIALIAS
+                f_img = f_img.resize((32, 32), resample_filter)
+                self.filter_icon = ctk.CTkImage(light_image=f_img, dark_image=f_img, size=(16, 16))
+            except Exception as e:
+                print(f"[WARNING] Failed to load filter_icon.png: {e}")
+                
+        self.filter_btn = ctk.CTkButton(top_bar, text="Filter", command=self._show_filter_popup,
+                                         image=self.filter_icon if self.filter_icon else None,
+                                         width=70, height=32,
+                                         font=ctk.CTkFont(size=12, weight="bold"),
+                                         fg_color="#2d2d5e", hover_color="#3d3d7e",
+                                         border_width=1, border_color="#555",
+                                         corner_radius=6)
+        self.filter_btn._image_label_spacing = 4
+
+        # Search button next to filter (only shown in Review Mode)
+        self.search_btn = ctk.CTkButton(top_bar, text="🔍 Search", command=self._show_search_popup,
+                                         width=70, height=32,
+                                         font=ctk.CTkFont(size=12, weight="bold"),
                                          fg_color="#2d2d5e", hover_color="#3d3d7e",
                                          border_width=1, border_color="#555",
                                          corner_radius=6)
@@ -70,6 +98,29 @@ class UIBuilderMixin:
         # Secondary categories stats cards
         self.category_stats_frame = FlowFrame(main, fg_color="transparent")
         self.category_stats_frame.pack(fill="x", pady=(0, 6))
+
+        # UUID display container (alternative to News Categories stats in Review Mode)
+        self.uuid_display_frame = ctk.CTkFrame(main, fg_color="transparent", height=24)
+        
+        self.uuid_lbl = ctk.CTkLabel(self.uuid_display_frame, text="ID: N/A", font=ctk.CTkFont(size=13, weight="bold"), text_color="#aaa")
+        self.uuid_lbl.pack(side="left", padx=(10, 4), pady=2)
+        
+        def copy_uuid():
+            uuid_str = getattr(self, "_current_uuid_str", "")
+            if uuid_str:
+                self.clipboard_clear()
+                self.clipboard_append(uuid_str)
+                self.update()
+                orig = self.uuid_copy_btn.cget("text")
+                self.uuid_copy_btn.configure(text="✅")
+                self.after(1000, lambda: self.uuid_copy_btn.configure(text=orig))
+                
+        self.uuid_copy_btn = ctk.CTkButton(
+            self.uuid_display_frame, text="📋", width=22, height=22,
+            font=ctk.CTkFont(size=12), fg_color="transparent", hover_color="#2b2b36",
+            text_color="#aaa", command=copy_uuid
+        )
+        self.uuid_copy_btn.pack(side="left", padx=(2, 10), pady=2)
 
         # Bottom controls container
         self.bottom_bar = ctk.CTkFrame(main, fg_color="#1a1a2e", corner_radius=8,
@@ -170,19 +221,41 @@ class UIBuilderMixin:
         self.heading_dup_text.bind("<Button-1>", lambda e: self._on_heading_dup_click())
 
         
+        # Load Google search icon
+        self.google_search_icon = None
+        google_icon_path = ASSETS_DIR / "google_icon.png"
+        if google_icon_path.exists():
+            try:
+                g_img = Image.open(google_icon_path)
+                try:
+                    resample_filter = Image.Resampling.LANCZOS
+                except AttributeError:
+                    try:
+                        resample_filter = Image.LANCZOS
+                    except AttributeError:
+                        resample_filter = Image.ANTIALIAS
+                
+                # Pre-resize to 32x32 using high-quality filter to prevent Tkinter downscale pixelation
+                g_img = g_img.resize((32, 32), resample_filter)
+                self.google_search_icon = ctk.CTkImage(light_image=g_img, dark_image=g_img, size=(16, 16))
+            except Exception as e:
+                print(f"[WARNING] Failed to load google_icon.png: {e}")
+
         self.heading_search_btn = ctk.CTkButton(
             self.heading_header,
-            text="🔎 Search",
+            text="Search",
+            image=self.google_search_icon if self.google_search_icon else None,
             command=self._open_heading_search,
-            width=84,
+            width=70,
             height=26,
-            font=ctk.CTkFont(size=12),
+            font=ctk.CTkFont(size=12, weight="bold"),
             fg_color="#2d2d5e",
             hover_color="#3d3d7e",
             border_width=1,
             border_color="#555",
             corner_radius=6
         )
+        self.heading_search_btn._image_label_spacing = 4
         self.heading_entry = ctk.CTkTextbox(self.left_col, height=55, font=ctk.CTkFont(size=13),
                                             border_width=1, border_color="#555", undo=True)
         self.heading_entry.pack(fill="x", padx=10, pady=(0, 6))

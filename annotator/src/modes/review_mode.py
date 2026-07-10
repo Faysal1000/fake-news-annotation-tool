@@ -88,6 +88,9 @@ class ReviewModeMixin:
 
         # Fetch the active record dictionary from the loaded subset
         record = self.dataset_records[index]
+        self._current_uuid_str = record.get("id") or "N/A"
+        if hasattr(self, "uuid_lbl"):
+            self.uuid_lbl.configure(text=f"ID: {self._current_uuid_str}")
 
         # Get total records size for display configuration
         total = len(self.dataset_records)

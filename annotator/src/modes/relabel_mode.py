@@ -83,6 +83,8 @@ class RelabelModeMixin:
         self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
         self.filter_btn.pack_forget()
         self.filter_indicator.pack_forget()
+        self.search_btn.pack_forget()
+        self.uuid_display_frame.pack_forget()
 
         # Set up primary button actions and hide secondary controls (like Delete or Clear All)
         self.primary_btn.configure(text="💾  Save Decision",
