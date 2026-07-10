@@ -264,10 +264,10 @@ class StatsMixin:
             
         # Duplicate audit badge (in Review and Annotate modes)
         if self.current_mode in ("review", "annotate"):
-            if not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None:
-                self._compute_global_duplicates()
-                
-            if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+            is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
+            cache_missing = not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None
+            
+            if cache_missing or is_computing:
                 dup_count = "..."
             else:
                 unique_records_with_dups = set()

@@ -15,8 +15,22 @@ from constants import CSV_COLUMNS
 from analysis.text_similarity import calculate_heading_similarity, calculate_jaccard_similarity, calculate_containment_similarity, clean_text
 from data.config_manager import get_full_config, save_full_config
 
+_worker_records = None
+_worker_index = None
+
+def _init_worker(records, index):
+    global _worker_records, _worker_index
+    _worker_records = records
+    _worker_index = index
+
 def _evaluate_duplicate_chunk(args):
-    start_idx, end_idx, global_records_data, global_inverted_index, threshold = args
+    if len(args) == 5:
+        start_idx, end_idx, global_records_data, global_inverted_index, threshold = args
+    else:
+        start_idx, end_idx, threshold = args
+        global_records_data = _worker_records
+        global_inverted_index = _worker_index
+        
     pairs_cache = []
     
     for i in range(start_idx, end_idx):
@@ -464,17 +478,20 @@ class DuplicateEngineMixin:
             
             if use_mp:
                 num_cores = os.cpu_count() or 4
-                chunk_size = max(1, n_records // num_cores)
+                # Slice into ~100 micro-chunks to ensure perfect load balancing of the O(N^2) load
+                num_chunks = 100
+                chunk_size = max(1, n_records // num_chunks)
                 
                 tasks = []
                 for start_idx in range(0, n_records, chunk_size):
                     end_idx = min(start_idx + chunk_size, n_records)
-                    tasks.append((start_idx, end_idx, global_records_data, global_inverted_index, threshold))
+                    tasks.append((start_idx, end_idx, threshold))
                 
-                with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores) as executor:
+                with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores, initializer=_init_worker, initargs=(global_records_data, global_inverted_index)) as executor:
                     futures = [executor.submit(_evaluate_duplicate_chunk, t) for t in tasks]
                     pending = set(futures)
                     
+                    completed_chunks = 0
                     while pending:
                         if getattr(self, '_duplicate_thread_generation', 0) != generation:
                             executor.shutdown(wait=False, cancel_futures=True)
@@ -482,12 +499,19 @@ class DuplicateEngineMixin:
                         done, pending = concurrent.futures.wait(pending, timeout=0.2, return_when=concurrent.futures.FIRST_COMPLETED)
                         for future in done:
                             pairs_cache.extend(future.result())
+                            completed_chunks += 1
+                            progress = completed_chunks / num_chunks
+                            self.after(0, lambda p=progress, g=generation: self._update_duplicate_progress(p, g))
             else:
+                update_interval = max(1, n_records // 100)
                 for i in range(n_records):
                     if getattr(self, '_duplicate_thread_generation', 0) != generation:
                         return
                     res = _evaluate_duplicate_chunk((i, i+1, global_records_data, global_inverted_index, threshold))
                     pairs_cache.extend(res)
+                    if i % update_interval == 0 or i == n_records - 1:
+                        progress = (i + 1) / n_records
+                        self.after(0, lambda p=progress, g=generation: self._update_duplicate_progress(p, g))
             
             # Use after() to safely update the GUI thread
             self.after(0, lambda: self._on_duplicate_thread_done(pairs_cache, generation))
@@ -495,6 +519,18 @@ class DuplicateEngineMixin:
         except Exception as e:
             print(f"Error in background duplicate check: {e}")
             self.after(0, lambda: self._on_duplicate_thread_done([], generation))
+
+    def _update_duplicate_progress(self, progress, generation):
+        if getattr(self, '_duplicate_thread_generation', 0) != generation:
+            return
+            
+        if hasattr(self, '_duplicate_popup_pb') and self._duplicate_popup_pb.winfo_exists():
+            self._duplicate_popup_pb.set(progress)
+            
+        if hasattr(self, '_duplicate_popup_lbl') and self._duplicate_popup_lbl.winfo_exists():
+            pct = int(progress * 100)
+            text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
+            self._duplicate_popup_lbl.configure(text=text)
 
     def _on_duplicate_thread_done(self, computed_cache, generation):
         # If a new thread has been started, ignore this old thread's result

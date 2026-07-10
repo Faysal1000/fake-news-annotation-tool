@@ -180,6 +180,9 @@ class AnnotatorTool(
         self._setup_dnd()
         self._update_stats()
 
+        # Start background duplicate calculation safely after mainloop starts
+        self.after(2000, self._compute_global_duplicates)
+
         # Start the background 5-minute sync loop
         self.after(5000, self._sync_global_metrics_loop)
 

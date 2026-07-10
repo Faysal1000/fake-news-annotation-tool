@@ -111,8 +111,9 @@ class DuplicateUIMixin:
         is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
         
         if cache_is_missing and not is_computing:
-            self._compute_global_duplicates()
+            self._duplicate_computing = True
             is_computing = True
+            self.after(500, self._compute_global_duplicates)
             
         if cache_is_missing:
             self._duplicate_pairs_cache = []
@@ -192,14 +193,24 @@ class DuplicateUIMixin:
         content_frame = ctk.CTkFrame(popup, fg_color="transparent")
         content_frame.pack(fill="both", expand=True)
 
+        use_mp = self._get_duplicate_multiprocessing()
         if is_computing:
             title_label.configure(text="⚠️ Global Duplicate Audit (Computing...)")
-            loading_lbl = ctk.CTkLabel(
-                content_frame, text="🔄 Recalculating duplicates...\nPlease wait.",
+            loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
+        else:
+            loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
+            
+        if cache_is_missing or is_computing:
+            self._duplicate_popup_lbl = ctk.CTkLabel(
+                content_frame, text=loading_text,
                 font=ctk.CTkFont(size=18, weight="bold"),
                 text_color="#f39c12"
             )
-            loading_lbl.place(relx=0.5, rely=0.5, anchor="center")
+            self._duplicate_popup_lbl.place(relx=0.5, rely=0.45, anchor="center")
+            
+            self._duplicate_popup_pb = ctk.CTkProgressBar(content_frame, width=300, fg_color="#2b2b36", progress_color="#f39c12")
+            self._duplicate_popup_pb.place(relx=0.5, rely=0.55, anchor="center")
+            self._duplicate_popup_pb.set(0.0)
             
             def check_computing():
                 if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
