@@ -6,6 +6,7 @@ bootstrap and launches the main CTk application window.
 """
 
 import sys
+import multiprocessing
 from pathlib import Path
 
 # Add src/ directory to python path
@@ -18,5 +19,6 @@ _check_and_install()
 from ui.main_window import AnnotatorTool
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     app = AnnotatorTool()
     app.mainloop()

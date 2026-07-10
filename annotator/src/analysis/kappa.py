@@ -261,7 +261,7 @@ def calculate_kappa(kappa_csv_path, mode="cohen"):
 def interpret_kappa(k):
     """Return a human-readable interpretation of a kappa score (Landis & Koch scale)."""
     if k < 0:
-        return "Poor (less than chance agreement)"
+        return "Poor (less than chance)"
     elif k < 0.21:
         return "Slight agreement"
     elif k < 0.41:

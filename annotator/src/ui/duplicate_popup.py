@@ -130,10 +130,72 @@ class DuplicateUIMixin:
         sy = (popup.winfo_screenheight() - h) // 2
         popup.geometry(f"{w}x{h}+{sx}+{sy}")
         
+        # Header (Always visible)
+        header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
+        header_frame.pack(side="top", fill="x")
+        
+        header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
+        header_inner.pack(fill="x", pady=12, padx=20)
+        
+        title_label = ctk.CTkLabel(
+            header_inner,
+            text=f"⚠️ {len(self._duplicate_pairs_cache or [])} Potential Duplicates",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color="#f39c12"
+        )
+        title_label.pack(side="left")
+        
+        # Controls in header
+        controls_frame = ctk.CTkFrame(header_inner, fg_color="transparent")
+        controls_frame.pack(side="right")
+        
+        # Multi-core Toggle
+        multicore_var = ctk.BooleanVar(value=self._get_duplicate_multiprocessing())
+        def toggle_multicore():
+            self._save_duplicate_multiprocessing(multicore_var.get())
+            self._compute_global_duplicates(force_restart=True)
+            popup.destroy()
+            self._show_global_duplicate_audit(0)
+            
+        ctk.CTkCheckBox(
+            controls_frame, text="Use Multi-core (Faster)", variable=multicore_var,
+            command=toggle_multicore, font=ctk.CTkFont(size=12, weight="bold")
+        ).pack(side="left", padx=(0, 20))
+        
+        thresh_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
+        thresh_frame.pack(side="left", padx=(0, 20))
+        ctk.CTkLabel(thresh_frame, text="Threshold (%):", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ccc").pack(side="left", padx=(0, 5))
+        thresh_var = ctk.StringVar(value=str(self._get_duplicate_threshold()))
+        ctk.CTkEntry(thresh_frame, textvariable=thresh_var, width=35, height=26, font=ctk.CTkFont(size=12)).pack(side="left")
+        
+        def save_threshold():
+            try:
+                val = int(thresh_var.get().strip())
+                if 1 <= val <= 100:
+                    self._save_duplicate_threshold(val)
+                    self._compute_global_duplicates(force_restart=True)
+                    popup.destroy()
+                    self._show_global_duplicate_audit(0)
+                else:
+                    messagebox.showerror("Error", "Threshold must be between 1 and 100.")
+            except ValueError:
+                messagebox.showerror("Error", "Invalid threshold value.")
+                
+        ctk.CTkButton(
+            thresh_frame, text="Save", width=45, height=26, 
+            font=ctk.CTkFont(size=11, weight="bold"),
+            fg_color="#2980b9", hover_color="#3498db",
+            command=save_threshold
+        ).pack(side="left", padx=(5, 0))
+        
+        # Main content area
+        content_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True)
+
         if is_computing:
-            # Show a loading screen that polls until it's done
+            title_label.configure(text="⚠️ Global Duplicate Audit (Computing...)")
             loading_lbl = ctk.CTkLabel(
-                popup, text="🔄 Recalculating duplicates...\nPlease wait.",
+                content_frame, text="🔄 Recalculating duplicates...\nPlease wait.",
                 font=ctk.CTkFont(size=18, weight="bold"),
                 text_color="#f39c12"
             )
@@ -149,68 +211,6 @@ class DuplicateUIMixin:
                         self._show_global_duplicate_audit(start_page)
             check_computing()
             return
-        
-        # Header
-        header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
-        header_frame.pack(side="top", fill="x")
-        
-        # Header text
-        header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
-        header_inner.pack(fill="x", pady=12, padx=20)
-        
-        ctk.CTkLabel(
-            header_inner,
-            text=f"⚠️ Global Duplicate Audit — {len(self._duplicate_pairs_cache or [])} Potential Duplicates",
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#f39c12"
-        ).pack(side="left")
-        
-        # Unmark all button & Show Marked checkbox & Threshold Input
-        controls_frame = ctk.CTkFrame(header_inner, fg_color="transparent")
-        controls_frame.pack(side="right")
-        
-        # Threshold Input
-        thresh_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        thresh_frame.pack(side="left", padx=(0, 20))
-        ctk.CTkLabel(thresh_frame, text="Threshold (%):", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ccc").pack(side="left", padx=(0, 5))
-        thresh_var = ctk.StringVar(value=str(self._get_duplicate_threshold()))
-        ctk.CTkEntry(thresh_frame, textvariable=thresh_var, width=35, height=26, font=ctk.CTkFont(size=12)).pack(side="left")
-        
-        def save_threshold():
-            try:
-                val = int(thresh_var.get().strip())
-                if 1 <= val <= 100:
-                    self._save_duplicate_threshold(val)
-                    # Clear the popup and show loading state
-                    for widget in popup.winfo_children():
-                        widget.destroy()
-                    ctk.CTkLabel(
-                        popup, text="🔄 Recalculating Duplicates...", 
-                        font=ctk.CTkFont(size=20, weight="bold"), 
-                        text_color="#f39c12"
-                    ).pack(expand=True)
-                    
-                    self._compute_global_duplicates()
-                    
-                    def check_done():
-                        if not getattr(self, '_duplicate_computing', False):
-                            popup.destroy()
-                            self._show_global_duplicate_audit(0)
-                        else:
-                            popup.after(100, check_done)
-                            
-                    check_done()
-                else:
-                    messagebox.showerror("Error", "Threshold must be between 1 and 100.")
-            except ValueError:
-                messagebox.showerror("Error", "Invalid threshold value.")
-                
-        ctk.CTkButton(
-            thresh_frame, text="Save", width=45, height=26, 
-            font=ctk.CTkFont(size=11, weight="bold"),
-            fg_color="#2980b9", hover_color="#3498db",
-            command=save_threshold
-        ).pack(side="left", padx=(5, 0))
         
         show_marked_var = ctk.BooleanVar(value=getattr(self, "_show_marked_duplicates", False))
         def toggle_show_marked():
@@ -239,7 +239,7 @@ class DuplicateUIMixin:
         page = max(0, min(page, total_pages - 1))
         
         # Scrollable list of matches
-        scroll_frame = ctk.CTkScrollableFrame(popup, fg_color="transparent")
+        scroll_frame = ctk.CTkScrollableFrame(content_frame, fg_color="transparent")
         scroll_frame.pack(side="top", fill="both", expand=True, padx=20, pady=(15, 0))
         
         start_idx = page * PAGE_SIZE
@@ -345,8 +345,8 @@ class DuplicateUIMixin:
                 ).pack(side="right")
                 
         # Pagination controls at bottom
-        pagination_frame = ctk.CTkFrame(popup, fg_color="transparent")
-        pagination_frame.pack(side="bottom", fill="x", pady=15, padx=20)
+        pagination_frame = ctk.CTkFrame(content_frame, fg_color="transparent", height=40)
+        pagination_frame.pack(side="bottom", fill="x", pady=10, padx=20)
         
         def go_prev():
             if page > 0:

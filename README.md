@@ -68,7 +68,7 @@ The `dataset.csv` file automatically records:
 - The `heading`, body `text`, and the platform `source_category`.
 - The exact relative paths to any saved media (`image_path`, `video_path`).
 
-The tool also maintains a `non_duplicates.json` file which safely stores any pairs of news articles you manually marked as "Non Duplicate" during duplicate auditing so they don't get flagged again.
+The tool also maintains a `non_duplicates.json` file which safely stores any pairs of news articles you manually marked as "Non Duplicate" during the multi-core accelerated duplicate auditing so they don't get flagged again. You can adjust the exact matching threshold or enable all CPU cores to audit 10K+ datasets in seconds directly from the duplicates popup.
 
 - **Submitting Data**: When you are done annotating, send your `dataset.csv`, `non_duplicates.json`, and your `images/` and `videos/` folders to your project lead.
 - **Aggregating Data**: Project leads can combine work from multiple annotators. Put everyone's folders into one master folder, open the Annotator Tool, click **"Scripts"** (top right), and select **"Aggregate Datasets"**. The script will automatically merge both the dataset records and the marked non-duplicates list seamlessly.

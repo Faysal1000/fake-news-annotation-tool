@@ -3,9 +3,10 @@ ScriptsMixin mixin class.
 """
 
 import os
+from pathlib import Path
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
-from app_paths import CSV_PATH, KAPPA_CSV_PATH, SCRIPT_DIR
+from app_paths import CSV_PATH, SCRIPT_DIR
 from analysis.aggregator import aggregate_datasets, generate_kappa_sample
 from analysis.kappa import calculate_kappa
 import threading
@@ -46,7 +47,7 @@ class ScriptsMixin:
         default_output_images = str(SCRIPT_DIR / "images")
         default_output_videos = str(SCRIPT_DIR / "videos")
         default_kappa_input = str(CSV_PATH)
-        default_kappa_output = str(KAPPA_CSV_PATH)
+        default_kappa_bundle = str(SCRIPT_DIR / "kappa_sample")
 
         # Helper to create input fields with label, default, browse, clear, and undo
         def _make_field(parent, label_text, default_value, row,
@@ -279,6 +280,8 @@ class ScriptsMixin:
             "• Balanced random sample for kappa testing\n"
             "• Customize Real/Fake split below\n"
             "• Fake sub-categories divide the Fake portion\n"
+            "• Creates a portable folder with the sample\n"
+            "   CSV + only its referenced images/videos\n"
             "• Output loads in Re-label mode"),
             font=ctk.CTkFont(size=11), text_color="#999",
             wraplength=300, justify="left", anchor="nw").grid(
@@ -481,22 +484,22 @@ class ScriptsMixin:
         satire_pct_entry.bind("<KeyRelease>", _on_satire_change)
         clickbait_pct_entry.bind("<KeyRelease>", _on_clickbait_change)
 
-        kappa_output_entry = _make_field(mid_card, "Output CSV",
-                                          default_kappa_output, row=10,
-                                          browse_file=True)
+        kappa_output_folder_entry = _make_field(mid_card, "Output Folder",
+                                                  default_kappa_bundle, row=10,
+                                                  browse_dir=True)
 
-        # Static warning note about changing the output filename
+        # Static note explaining the output folder
         ctk.CTkLabel(mid_card, text=(
-            "⚠ Changing filename from 'relabeling_for_kappa.csv' "
-            "will break Re-label mode auto-detection."),
-            font=ctk.CTkFont(size=10), text_color="#e67e22",
+            "ℹ The sample CSV, images/ and videos/ will all be\n"
+            "   placed inside this folder. "),
+            font=ctk.CTkFont(size=10), text_color="#3498db",
             wraplength=300, justify="left", anchor="nw").grid(
                 row=12, column=0, padx=10, pady=(0, 2), sticky="w")
 
         def _run_kappa_gen():
             input_csv = kappa_input_entry.get().strip()
             n_str = kappa_n_entry.get().strip()
-            output_csv = kappa_output_entry.get().strip() or default_kappa_output
+            output_folder = kappa_output_folder_entry.get().strip() or default_kappa_bundle
             if not input_csv:
                 popup.attributes("-topmost", False)
                 messagebox.showwarning("Missing Input", "Provide the input CSV path.", parent=popup)
@@ -544,29 +547,32 @@ class ScriptsMixin:
                 popup.attributes("-topmost", True)
                 return
 
-            # Warn if output filename changed from default
-            output_basename = os.path.basename(output_csv)
-            if output_basename != "relabeling_for_kappa.csv":
-                popup.attributes("-topmost", False)
-                if not messagebox.askyesno("Filename Warning",
-                    f"You changed the output filename to '{output_basename}'.\n\n"
-                    "The Re-label mode expects 'relabeling_for_kappa.csv'.\n"
-                    "The generated file will NOT load automatically in Re-label mode.\n\n"
-                    "Continue anyway?", parent=popup):
-                    popup.attributes("-topmost", True)
-                    return
-                popup.attributes("-topmost", True)
-
-            if os.path.exists(output_csv):
+            # Warn if the output folder already has content from a previous run
+            bundle_csv = os.path.join(output_folder, "relabeling_for_kappa.csv")
+            bundle_imgs = os.path.join(output_folder, "images")
+            bundle_vids = os.path.join(output_folder, "videos")
+            existing = []
+            if os.path.exists(bundle_csv):
+                existing.append("relabeling_for_kappa.csv")
+            if os.path.isdir(bundle_imgs) and os.listdir(bundle_imgs):
+                existing.append("images/")
+            if os.path.isdir(bundle_vids) and os.listdir(bundle_vids):
+                existing.append("videos/")
+            if existing:
                 popup.attributes("-topmost", False)
                 if not messagebox.askyesno("Overwrite Warning",
-                    f"Output file already exists:\n  {output_csv}\n\nOverwrite?", parent=popup):
+                    f"Output folder already contains data from a previous run:\n"
+                    f"  {output_folder}\n\n"
+                    f"These will be overwritten:\n" +
+                    "\n".join(f"  • {p}" for p in existing) +
+                    "\n\nContinue?", parent=popup):
                     popup.attributes("-topmost", True)
                     return
                 popup.attributes("-topmost", True)
 
             _show_result_popup("Generate Kappa Sample",
-                               lambda: generate_kappa_sample(input_csv, output_csv, n,
+                               lambda: generate_kappa_sample(input_csv, n,
+                                                              output_folder=output_folder,
                                                               real_pct=r_pct, misinfo_pct=m_pct,
                                                               satire_pct=s_pct, clickbait_pct=c_pct))
 
@@ -599,7 +605,8 @@ class ScriptsMixin:
                 row=1, column=0, padx=10, pady=(2, 4), sticky="w")
 
         kappa_calc_entry = _make_field(right_card, "Kappa CSV File",
-                                        default_kappa_output, row=2, browse_file=True)
+                                        str(Path(default_kappa_bundle) / "relabeling_for_kappa.csv"),
+                                        row=2, browse_file=True)
 
         ctk.CTkLabel(right_card, text="Kappa Mode",
                      font=ctk.CTkFont(size=12, weight="bold"),

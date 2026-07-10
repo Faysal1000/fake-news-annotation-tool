@@ -26,3 +26,4 @@ non_duplicates.json
 # Environment variables
 .env
 
+kappa_sample/

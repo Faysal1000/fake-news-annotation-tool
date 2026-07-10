@@ -6,7 +6,7 @@ import customtkinter as ctk
 from tkinter import messagebox
 import csv
 from pathlib import Path
-from app_paths import KAPPA_CSV_PATH, SCRIPT_DIR
+from app_paths import KAPPA_CSV_PATH
 from constants import MULTI_CATEGORIES, CSV_COLUMNS
 from data.config_manager import load_config, save_config, sanitize_name
 
@@ -286,7 +286,7 @@ class RelabelModeMixin:
             messagebox.showinfo(
                 "No Kappa Data",
                 f"Kappa re-labeling CSV not found:\n{KAPPA_CSV_PATH}\n\n"
-                "Run generate_kappa_sample.py first to create it."
+                "Use Scripts → Generate Kappa Sample to create it."
             )
             return False
 
@@ -305,7 +305,7 @@ class RelabelModeMixin:
         if not self.kappa_records:
             messagebox.showinfo("No Kappa Data",
                 "The kappa CSV file is empty.\n"
-                "Run generate_kappa_sample.py first to populate it.")
+                "Use Scripts → Generate Kappa Sample to populate it.")
             return False
 
         return True
@@ -399,7 +399,7 @@ class RelabelModeMixin:
         # Load and verify the attached video path if registered
         video_path_str = record.get("video_path") or ""
         if video_path_str:
-            full_vid_path = SCRIPT_DIR / video_path_str
+            full_vid_path = KAPPA_CSV_PATH.parent / video_path_str
             if full_vid_path.exists():
                 self.video_path = full_vid_path
             else:
@@ -412,7 +412,7 @@ class RelabelModeMixin:
             for rel_path in image_paths.split(";"):
                 rel_path = rel_path.strip()
                 if rel_path:
-                    full_path = SCRIPT_DIR / rel_path
+                    full_path = KAPPA_CSV_PATH.parent / rel_path
                     if full_path.exists():
                         # Store verified path with a None placeholder for the PIL Image object
                         self.image_list.append((full_path, None))

@@ -49,7 +49,6 @@ def aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outpu
 
         if os.path.isfile(non_dups_path):
             try:
-                import json
                 with open(non_dups_path, "r", encoding="utf-8") as f:
                     all_non_dups.update(json.load(f))
             except Exception as e:
@@ -94,7 +93,6 @@ def aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outpu
     if all_non_dups:
         output_non_dups_path = os.path.join(os.path.dirname(output_csv_path), "non_duplicates.json")
         try:
-            import json
             with open(output_non_dups_path, "w", encoding="utf-8") as f:
                 json.dump(list(all_non_dups), f)
         except Exception as e:
@@ -109,7 +107,52 @@ def aggregate_datasets(annotators_dir, output_csv_path, output_images_dir, outpu
         f"Output CSV: {output_csv_path}"
     )
 
-def generate_kappa_sample(input_csv_path, output_csv_path, n,
+def _copy_sample_media(sample_rows, source_base, output_dir):
+    """
+    Copy the image/video files referenced by sample_rows from source_base into
+    output_dir, preserving the relative "images/..." and "videos/..." layout.
+
+    source_base: Path the CSV's media paths are relative to (the dataset folder).
+    output_dir:  Destination folder for the copied media.
+
+    Returns (images_copied, videos_copied, missing) where missing is a list of
+    relative paths that were referenced but not found under source_base.
+    """
+    images_copied = 0
+    videos_copied = 0
+    missing = []
+    seen = set()
+
+    def _copy_one(rel_raw, is_image):
+        nonlocal images_copied, videos_copied
+        rel = rel_raw.strip().replace("\\", "/")
+        if not rel or rel in seen:
+            return
+        seen.add(rel)
+        src = source_base / rel
+        if src.is_file():
+            dst = output_dir / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            if is_image:
+                images_copied += 1
+            else:
+                videos_copied += 1
+        else:
+            missing.append(rel)
+
+    for row in sample_rows:
+        for rel in (row.get("image_path") or "").split(";"):
+            if rel.strip():
+                _copy_one(rel, True)
+        vid = (row.get("video_path") or "").strip()
+        if vid:
+            _copy_one(vid, False)
+
+    return images_copied, videos_copied, missing
+
+def generate_kappa_sample(input_csv_path, n,
+                           output_folder=None,
                            real_pct=50.0, misinfo_pct=33.33,
                            satire_pct=33.33, clickbait_pct=33.34):
     """
@@ -117,6 +160,13 @@ def generate_kappa_sample(input_csv_path, output_csv_path, n,
     Distribution is configurable via percentage parameters.
     real_pct: percentage of total sample that should be Real.
     misinfo_pct/satire_pct/clickbait_pct: percentage of the Fake portion for each sub-category.
+
+    Creates a self-contained, portable output folder containing:
+      - relabeling_for_kappa.csv  (the sample CSV)
+      - images/                   (only images referenced by the sample)
+      - videos/                   (only videos referenced by the sample)
+
+    The whole folder can be zipped and sent to a teammate for re-labeling.
     Returns a summary string on success.
     """
     input_path = Path(input_csv_path)
@@ -189,17 +239,45 @@ def generate_kappa_sample(input_csv_path, output_csv_path, n,
         result.extend(items)
     random.shuffle(result)
 
-    # Write output CSV
-    output_path = Path(output_csv_path)
-    with open(output_path, "w", newline="", encoding="utf-8") as f:
+    clean_rows = [{col: row.get(col, "") for col in CSV_COLUMNS} for row in result]
+
+    # Build the self-contained output folder
+    output_path = Path(output_folder) if output_folder else input_path.parent / "kappa_sample"
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Clear any existing images/ and videos/ so stale files from a previous
+    # run don't leak into the new self-contained package.
+    for media_sub in ("images", "videos"):
+        sub = output_path / media_sub
+        if sub.is_dir():
+            shutil.rmtree(sub)
+        sub.mkdir(parents=True, exist_ok=True)
+
+    # Write the sample CSV into the output folder
+    csv_filename = "relabeling_for_kappa.csv"
+    bundle_csv = output_path / csv_filename
+    with open(bundle_csv, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
         writer.writeheader()
-        for row in result:
-            clean_row = {col: row.get(col, "") for col in CSV_COLUMNS}
+        for clean_row in clean_rows:
             writer.writerow(clean_row)
+
+    # Copy only the media referenced by the sampled rows into the output folder.
+    images_copied, videos_copied, missing = _copy_sample_media(
+        clean_rows, input_path.parent, output_path)
 
     total = len(result)
     fake_pct_used = round(100.0 - real_pct, 2)
+
+    missing_note = ""
+    if missing:
+        preview = "\n".join(f"    {p}" for p in missing[:5])
+        more = f"\n    ... ({len(missing)} total)" if len(missing) > 5 else ""
+        missing_note = (
+            f"\n\n⚠ {len(missing)} referenced media file(s) were not found "
+            f"and could not be copied:\n{preview}{more}"
+        )
+
     return (
         f"Kappa sample generated!\n\n"
         f"Input: {input_csv_path}\n"
@@ -211,5 +289,10 @@ def generate_kappa_sample(input_csv_path, output_csv_path, n,
         f"  Misinformation: {counts['Misinformation']}\n"
         f"  Satire: {counts['Satire']}\n"
         f"  Clickbait: {counts['Clickbait']}\n\n"
-        f"Output: {output_csv_path}"
+        f"Output folder (send this whole folder to your teammate):\n"
+        f"  {output_path}\n"
+        f"    {csv_filename}\n"
+        f"    images/  ({images_copied} file(s))\n"
+        f"    videos/  ({videos_copied} file(s))"
+        f"{missing_note}"
     )

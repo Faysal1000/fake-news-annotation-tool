@@ -27,7 +27,7 @@ IMAGES_DIR = SCRIPT_DIR / "images"
 VIDEOS_DIR = SCRIPT_DIR / "videos"
 CSV_PATH = SCRIPT_DIR / "dataset.csv"
 CONFIG_PATH = SCRIPT_DIR / ".annotator_config.json"
-KAPPA_CSV_PATH = SCRIPT_DIR / "relabeling_for_kappa.csv"
+KAPPA_CSV_PATH = SCRIPT_DIR / "kappa_sample" / "relabeling_for_kappa.csv"
 
 UPDATE_API_URL = "https://api.github.com/repos/Faysal1000/fake-news-annotation-tool/releases/latest"
 UPDATE_DOWNLOAD_BASE_URL = "https://github.com/Faysal1000/fake-news-annotation-tool/releases/latest/download"
