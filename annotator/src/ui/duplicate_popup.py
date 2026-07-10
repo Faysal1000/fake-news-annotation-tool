@@ -347,7 +347,7 @@ class DuplicateUIMixin:
                 
             cache_to_show = (self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache) or []
             
-            PAGE_SIZE = 50
+            PAGE_SIZE = 20
             total_pages = max(1, (len(cache_to_show) + PAGE_SIZE - 1) // PAGE_SIZE)
             page = max(0, min(page, total_pages - 1))
             
