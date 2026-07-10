@@ -220,6 +220,11 @@ class DuplicateEngineMixin:
             self._hide_duplicate_warnings()
             return
             
+        # Pause if an update is downloading/installing
+        if getattr(self, '_update_download_thread', None) and self._update_download_thread.is_alive():
+            self._hide_duplicate_warnings()
+            return
+            
         current_id = None
         if self.current_mode == "review" and self.dataset_records:
             record = self.dataset_records[self.current_review_index]
@@ -417,6 +422,10 @@ class DuplicateEngineMixin:
         Computes all duplicate pairs in the dataset in a true background thread.
         Stores results in self._duplicate_pairs_cache and safely updates UI when done.
         """
+        # Pause background calculation if an update is downloading/installing
+        if getattr(self, '_update_download_thread', None) and self._update_download_thread.is_alive():
+            return
+
         if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
             if not force_restart:
                 return

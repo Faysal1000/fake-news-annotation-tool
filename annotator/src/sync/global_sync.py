@@ -20,6 +20,10 @@ class GlobalSyncMixin:
         self.after(300000, self._sync_global_metrics_loop)
 
     def _sync_global_metrics_worker(self):
+        # Pause syncing if an update is currently downloading/installing
+        if getattr(self, '_update_download_thread', None) and self._update_download_thread.is_alive():
+            return
+
         if not self._sync_lock.acquire(blocking=False):
             return
 
