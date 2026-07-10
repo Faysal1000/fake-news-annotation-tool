@@ -569,6 +569,8 @@ class DuplicateEngineMixin:
         if getattr(self, '_duplicate_thread_generation', 0) != generation:
             return
             
+        self._current_duplicate_progress = progress
+        
         if hasattr(self, '_duplicate_popup_pb') and self._duplicate_popup_pb.winfo_exists():
             self._duplicate_popup_pb.set(progress)
             
@@ -582,23 +584,28 @@ class DuplicateEngineMixin:
         if getattr(self, '_duplicate_thread_generation', 0) != generation:
             return
             
-        self._duplicate_computing = False
-        
-        if cancelled:
-            # When cancelled, keep existing cache if any, but stop the popup
-            if hasattr(self, '_duplicate_popup_lbl') and self._duplicate_popup_lbl.winfo_exists():
-                # We can't destroy the whole popup directly without a ref, but it usually gets overwritten 
-                # or destroyed when the user re-opens it. We just reset the calculating state.
-                self._duplicate_popup_lbl.configure(text="❌ Calculation Cancelled")
-            return
-            
-        self._raw_duplicate_pairs_cache = computed_cache
-        self._duplicate_pairs_cache = computed_cache
-        # Load non duplicates
-        non_dups = self._load_non_duplicates()
-        if non_dups:
-            self._apply_non_duplicates_filter()
-        self._update_stats()
+        try:
+            if cancelled:
+                self._duplicate_computing = False
+                # When cancelled, keep existing cache if any, but stop the popup
+                if hasattr(self, '_duplicate_popup_lbl') and self._duplicate_popup_lbl.winfo_exists():
+                    # We can't destroy the whole popup directly without a ref, but it usually gets overwritten 
+                    # or destroyed when the user re-opens it. We just reset the calculating state.
+                    self._duplicate_popup_lbl.configure(text="❌ Calculation Cancelled")
+                return
+                
+            self._raw_duplicate_pairs_cache = computed_cache
+            self._duplicate_pairs_cache = computed_cache
+            # Load non duplicates
+            non_dups = self._load_non_duplicates()
+            if non_dups:
+                self._apply_non_duplicates_filter()
+            self._update_stats()
+        except Exception as e:
+            print(f"Error finishing duplicate computation: {e}")
+        finally:
+            # Done computing - set state at the end to prevent race condition
+            self._duplicate_computing = False
 
     def _get_non_duplicates_file_path(self):
         import os

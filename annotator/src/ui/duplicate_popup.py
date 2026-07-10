@@ -5,15 +5,65 @@ DuplicateUIMixin mixin class.
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import messagebox
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import subprocess
 import os
 import platform
 import sys
+import math
 from pathlib import Path
 from app_paths import SCRIPT_DIR
 from constants import IMAGE_EXTENSIONS, VIDEO_EXTENSIONS
 from analysis.text_similarity import calculate_jaccard_similarity, clean_text, find_matching_word_ranges, get_words_with_positions
+
+def _get_slashed_eye_icon(color="#f39c12"):
+    try:
+        img = Image.new("RGBA", (32, 32), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        # Upper/lower eye lids
+        draw.arc([4, 8, 28, 24], 190, 350, fill=color, width=2)
+        draw.arc([4, 8, 28, 24], 10, 170, fill=color, width=2)
+        # Pupil
+        draw.ellipse([13, 13, 19, 19], fill=color)
+        # Slash
+        draw.line([6, 6, 26, 26], fill=color, width=2)
+        return ctk_image_helper(img)
+    except Exception:
+        return None
+
+def _get_refresh_icon(color="#e74c3c"):
+    try:
+        img = Image.new("RGBA", (32, 32), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        # Circular arc
+        draw.arc([6, 6, 26, 26], 40, 320, fill=color, width=3)
+        # Arrow head at angle 320
+        rad = 320 * math.pi / 180
+        r = 10
+        cx, cy = 16, 16
+        x = cx + r * math.cos(rad)
+        y = cy + r * math.sin(rad)
+        # Draw arrow segments
+        draw.line([x, y, x - 5, y + 1], fill=color, width=3)
+        draw.line([x, y, x + 1, y - 5], fill=color, width=3)
+        return ctk_image_helper(img)
+    except Exception:
+        return None
+
+def _get_close_icon(color="#fff"):
+    try:
+        img = Image.new("RGBA", (32, 32), (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        # Draw "X" cross
+        draw.line([8, 8, 24, 24], fill=color, width=3)
+        draw.line([24, 8, 8, 24], fill=color, width=3)
+        return ctk_image_helper(img)
+    except Exception:
+        return None
+
+def ctk_image_helper(img):
+    import customtkinter as ctk
+    return ctk.CTkImage(light_image=img, dark_image=img, size=(16, 16))
 
 class DuplicateUIMixin:
     def _show_review_duplicates(self):
@@ -103,7 +153,7 @@ class DuplicateUIMixin:
             command=popup.destroy,
             fg_color="#34495e",
             hover_color="#2c3e50"
-        ).pack(pady=(0, 15))
+        ).pack(pady=15)
 
     def _show_global_duplicate_audit(self, start_page=0):
         page = start_page
@@ -112,13 +162,16 @@ class DuplicateUIMixin:
         if not hasattr(self, '_raw_duplicate_pairs_cache'):
             self._raw_duplicate_pairs_cache = None
             
+        thread_alive = hasattr(self, '_duplicate_thread') and self._duplicate_thread is not None and self._duplicate_thread.is_alive()
+        if hasattr(self, '_duplicate_computing') and self._duplicate_computing and not thread_alive:
+            self._duplicate_computing = False
+            
         cache_is_missing = self._duplicate_pairs_cache is None
         is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
         
         if cache_is_missing and not is_computing:
             self._duplicate_computing = True
             is_computing = True
-            # Initialize progress
             self._current_duplicate_progress = 0.0
             self.after(500, self._compute_global_duplicates)
             
@@ -128,56 +181,361 @@ class DuplicateUIMixin:
             
         popup = ctk.CTkToplevel(self)
         popup.title("Global Duplicate Audit")
-        w, h = 900, 620
+        w, h = 1000, 700
         popup.configure(fg_color="#1a1a2e")
         popup.transient(self)
         
-        # Center on screen
         popup.update_idletasks()
         sx = (popup.winfo_screenwidth() - w) // 2
         sy = (popup.winfo_screenheight() - h) // 2
         popup.geometry(f"{w}x{h}+{sx}+{sy}")
         
-        # Header (Always visible)
+        # Centered Header (Always visible)
         header_frame = ctk.CTkFrame(popup, fg_color="#2b2b36", height=60, corner_radius=0)
         header_frame.pack(side="top", fill="x")
         
         header_inner = ctk.CTkFrame(header_frame, fg_color="transparent")
-        header_inner.pack(fill="x", pady=12, padx=20)
+        header_inner.pack(fill="both", expand=True)
         
+        marked_count = len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])
+        use_mp = self._get_duplicate_multiprocessing()
+        current_progress = getattr(self, '_current_duplicate_progress', 0.0)
+        
+        if is_computing:
+            if current_progress > 0.0:
+                pct = int(current_progress * 100)
+                header_title = f"🔄 Recalculating duplicates... {pct}%"
+            else:
+                header_title = "🚀 Initializing multi-core workers..." if use_mp else "⏳ Calculating duplicates..."
+        else:
+            header_title = f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({marked_count} marked as non-duplicate)"
+            
         title_label = ctk.CTkLabel(
             header_inner,
-            text=f"⚠️ {len(self._duplicate_pairs_cache or [])} Potential Duplicates",
+            text=header_title,
             font=ctk.CTkFont(size=16, weight="bold"),
             text_color="#f39c12"
         )
-        title_label.pack(side="left")
+        title_label.pack(side="top", expand=True, pady=12)
         
-        # Controls in header
-        controls_frame = ctk.CTkFrame(header_inner, fg_color="transparent")
-        controls_frame.pack(side="right")
+        # Main content area split into 4:1 layout
+        content_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True)
+
+        left_frame = ctk.CTkFrame(content_frame, fg_color="transparent")
+        left_frame.pack(side="left", fill="both", expand=True, padx=(20, 10), pady=15)
         
+        sidebar_frame = ctk.CTkFrame(content_frame, fg_color="#2b2b36", width=220, corner_radius=8)
+        sidebar_frame.pack_propagate(False)
+        sidebar_frame.pack(side="right", fill="y", padx=(10, 20), pady=15)
+        
+        # Sidebar Controls Title
+        sidebar_title_frame = ctk.CTkFrame(sidebar_frame, fg_color="transparent")
+        sidebar_title_frame.pack(fill="x", padx=15, pady=(15, 5))
+        
+        ctk.CTkLabel(
+            sidebar_title_frame, text="⚙️ Controls",
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color="#fff"
+        ).pack(side="left")
+        
+        separator = ctk.CTkFrame(sidebar_frame, fg_color="#3e3e4a", height=2, corner_radius=0)
+        separator.pack(fill="x", padx=15, pady=(0, 15))
+        
+        # Define in-place helper functions
+        def run_in_place_recompute():
+            self._duplicate_pairs_cache = None
+            self._raw_duplicate_pairs_cache = None
+            self._cached_records_data = None
+            self._cached_inverted_index = None
+            self._compute_global_duplicates(force_restart=True)
+            
+            # Clear left_frame
+            for w in left_frame.winfo_children():
+                w.destroy()
+                
+            self._duplicate_popup_lbl = ctk.CTkLabel(
+                left_frame, text="⏳ Initializing computation...\nPlease wait.",
+                font=ctk.CTkFont(size=18, weight="bold"),
+                text_color="#f39c12"
+            )
+            self._duplicate_popup_lbl.place(relx=0.5, rely=0.45, anchor="center")
+            
+            self._duplicate_popup_pb = ctk.CTkProgressBar(left_frame, width=300, fg_color="#2b2b36", progress_color="#f39c12")
+            self._duplicate_popup_pb.place(relx=0.5, rely=0.55, anchor="center")
+            self._duplicate_popup_pb.set(0.0)
+            
+            # Reset title to calculating
+            title_label.configure(text="🔄 Recalculating duplicates...")
+            
+            check_computing()
+
+        def check_computing():
+            if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
+                if popup.winfo_exists():
+                    curr_prog = getattr(self, '_current_duplicate_progress', 0.0)
+                    if hasattr(self, '_duplicate_popup_pb') and self._duplicate_popup_pb.winfo_exists():
+                        self._duplicate_popup_pb.set(curr_prog)
+                    if hasattr(self, '_duplicate_popup_lbl') and self._duplicate_popup_lbl.winfo_exists():
+                        pct = int(curr_prog * 100)
+                        self._duplicate_popup_lbl.configure(text=f"🔄 Recalculating duplicates... {pct}%\nPlease wait.")
+                    popup.after(200, check_computing)
+            else:
+                if popup.winfo_exists():
+                    # Clear loading widgets
+                    for w in left_frame.winfo_children():
+                        w.destroy()
+                    # Rebuild results view
+                    non_dups_count = len(self._load_non_duplicates())
+                    marked_count = len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])
+                    title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({marked_count} marked as non-duplicate)")
+                    
+                    # Update dynamically
+                    update_show_marked_label()
+                    rebuild_unmark_btn()
+                    build_results_view(0)
+
+        unmark_btn_widget = [None]
+        unmark_sub_widget = [None]
+        
+        def rebuild_unmark_btn():
+            # Clear existing if any
+            if unmark_btn_widget[0] is not None:
+                try:
+                    unmark_btn_widget[0].destroy()
+                except Exception:
+                    pass
+                unmark_btn_widget[0] = None
+            if unmark_sub_widget[0] is not None:
+                try:
+                    unmark_sub_widget[0].destroy()
+                except Exception:
+                    pass
+                unmark_sub_widget[0] = None
+                
+            is_comp = hasattr(self, '_duplicate_computing') and self._duplicate_computing
+            if not is_comp and show_marked_var.get() and self._load_non_duplicates():
+                btn = ctk.CTkButton(
+                    sidebar_frame, text="Unmark All", width=190, height=32,
+                    image=_get_slashed_eye_icon("#f39c12"),
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    fg_color="transparent", border_color="#f39c12", border_width=1,
+                    text_color="#f39c12", hover_color="#2c2c36",
+                    corner_radius=6,
+                    command=lambda: [self._unmark_all_non_duplicates(), rebuild_unmark_btn(), update_show_marked_label(), build_results_view(0)]
+                )
+                btn._image_label_spacing = 6
+                btn.pack(fill="x", padx=15, pady=(5, 2))
+                unmark_btn_widget[0] = btn
+                
+                sub = ctk.CTkLabel(
+                    sidebar_frame, text="Remove non-duplicate marks from all items.",
+                    font=ctk.CTkFont(size=9), text_color="#888", wraplength=190, justify="left"
+                )
+                sub.pack(anchor="w", padx=15, pady=(0, 10))
+                unmark_sub_widget[0] = sub
+
+        def update_show_marked_label():
+            non_dups_count = len(self._load_non_duplicates())
+            checkbox_text = f"Show Marked ({non_dups_count})" if non_dups_count > 0 else "Show Marked"
+            show_marked_cb.configure(text=checkbox_text)
+
+        def build_results_view(page):
+            # Clear left_frame
+            for w in left_frame.winfo_children():
+                w.destroy()
+                
+            cache_to_show = (self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache) or []
+            
+            PAGE_SIZE = 50
+            total_pages = max(1, (len(cache_to_show) + PAGE_SIZE - 1) // PAGE_SIZE)
+            page = max(0, min(page, total_pages - 1))
+            
+            # Pagination controls at bottom of left_frame
+            pagination_frame = ctk.CTkFrame(left_frame, fg_color="transparent", height=40)
+            pagination_frame.pack(side="bottom", fill="x", pady=(10, 0), padx=10)
+            
+            def go_prev():
+                if page > 0:
+                    build_results_view(page - 1)
+                    
+            def go_next():
+                if page < total_pages - 1:
+                    build_results_view(page + 1)
+            
+            prev_btn = ctk.CTkButton(pagination_frame, text="◀ Prev", width=80, state="normal" if page > 0 else "disabled", command=go_prev)
+            prev_btn.pack(side="left")
+            
+            ctk.CTkLabel(pagination_frame, text=f"Page {page + 1} of {total_pages}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", expand=True)
+            
+            next_btn = ctk.CTkButton(pagination_frame, text="Next ▶", width=80, state="normal" if page < total_pages - 1 else "disabled", command=go_next)
+            next_btn.pack(side="right")
+            
+            # Scrollable list of matches
+            scroll_frame = ctk.CTkScrollableFrame(left_frame, fg_color="transparent")
+            scroll_frame.pack(side="top", fill="both", expand=True, padx=10, pady=(5, 0))
+            
+            if not cache_to_show:
+                empty_msg = "No duplicates found at the current threshold."
+                if not show_marked_var.get() and len(self._raw_duplicate_pairs_cache) > 0:
+                    empty_msg = "All duplicates have been marked as Non-Duplicate.\nCheck 'Show Marked' to view them."
+                    
+                ctk.CTkLabel(
+                    scroll_frame, text=empty_msg,
+                    font=ctk.CTkFont(size=14, slant="italic"),
+                    text_color="#888"
+                ).pack(pady=40)
+                return
+            
+            for pair in cache_to_show[page * PAGE_SIZE : min((page + 1) * PAGE_SIZE, len(cache_to_show))]:
+                idx_a = pair["idx_a"]
+                idx_b = pair["idx_b"]
+                sim = pair["similarity"]
+                combined_sim = pair["combined_sim"]
+                heading_sim = pair["heading_sim"]
+                text_sim = pair.get("text_sim", 0.0)
+                
+                sim_pct = int(sim * 100)
+                
+                # -- Card row --
+                row_frame = ctk.CTkFrame(scroll_frame, fg_color="#1e1e28", corner_radius=8,
+                                          border_width=1, border_color="#2a2a3a")
+                row_frame.pack(fill="x", pady=5, ipady=6)
+                
+                # Badges for both records
+                badge_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+                badge_frame.pack(side="left", padx=(10, 10), pady=6)
+                
+                color_a = "#e74c3c" if sim_pct >= 80 else ("#f39c12" if sim_pct >= 60 else "#3498db")
+                
+                badge_a = ctk.CTkLabel(
+                    badge_frame, text=f" #{idx_a + 1} ",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    fg_color=color_a, corner_radius=6,
+                    text_color="white", width=50, height=26
+                )
+                badge_a.pack(side="left", padx=2)
+                
+                ctk.CTkLabel(badge_frame, text="↔", font=ctk.CTkFont(size=14, weight="bold"), text_color="#aaa").pack(side="left", padx=4)
+                
+                badge_b = ctk.CTkLabel(
+                    badge_frame, text=f" #{idx_b + 1} ",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    fg_color=color_a, corner_radius=6,
+                    text_color="white", width=50, height=26
+                )
+                badge_b.pack(side="left", padx=2)
+                
+                # Large bold green match percent
+                match_pct_lbl = ctk.CTkLabel(
+                    row_frame, text=f"{sim_pct}%\nmatch",
+                    font=ctk.CTkFont(size=14, weight="bold"),
+                    text_color="#2ecc71", width=80
+                )
+                match_pct_lbl.pack(side="left", padx=(5, 10))
+                
+                # Action buttons frame (Compare + Not Duplicate side-by-side, no status outline)
+                # Pack this SIDE="RIGHT" FIRST so it stays pinned to the absolute right side
+                actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+                actions_frame.pack(side="right", padx=(0, 15), pady=6)
+                
+                # Stacked metric columns (Pack side="left" with expand=True so card takes full width)
+                metrics_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
+                metrics_frame.pack(side="left", fill="both", expand=True, padx=(5, 10))
+                
+                def add_metric_col(parent, label, value):
+                    col = ctk.CTkFrame(parent, fg_color="transparent")
+                    col.pack(side="left", padx=6)
+                    ctk.CTkLabel(col, text=label, font=ctk.CTkFont(size=10), text_color="#888").pack(anchor="center")
+                    ctk.CTkLabel(col, text=value, font=ctk.CTkFont(size=12, weight="bold"), text_color="#fff").pack(anchor="center")
+                    
+                add_metric_col(metrics_frame, "Head+Body", f"{int(combined_sim*100)}%")
+                add_metric_col(metrics_frame, "Heading", f"{int(heading_sim*100)}%")
+                add_metric_col(metrics_frame, "Text", f"{int(text_sim*100)}%")
+                
+                # Compare button
+                ctk.CTkButton(
+                    actions_frame, text="🔍 Compare", width=90, height=28,
+                    font=ctk.CTkFont(size=11, weight="bold"),
+                    fg_color="#6c5ce7", hover_color="#5a4bd1",
+                    corner_radius=6,
+                    command=lambda p=pair: self._show_side_by_side_comparison(
+                        p["record_a"], p["record_b"], p, parent_popup=popup,
+                        on_mark_change_callback=lambda: [build_results_view(page)]
+                    )
+                ).pack(side="right", padx=(6, 0))
+    
+                # Not Duplicate / Restore button
+                non_dups = self._load_non_duplicates()
+                id_a_str = str(pair["record_a"].get("id", ""))
+                id_b_str = str(pair["record_b"].get("id", ""))
+                pair_key = f"{min(id_a_str, id_b_str)}_{max(id_a_str, id_b_str)}"
+                is_marked = pair_key in non_dups
+                
+                if is_marked:
+                    ctk.CTkButton(
+                        actions_frame, text="Restore", width=80, height=28,
+                        font=ctk.CTkFont(size=11, weight="bold"),
+                        fg_color="#e67e22", hover_color="#d35400",
+                        corner_radius=6,
+                        command=lambda p=pair: [
+                            self._unmark_as_non_duplicate(p["record_a"], p["record_b"]),
+                            update_show_marked_label(),
+                            rebuild_unmark_btn(),
+                            title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])} marked as non-duplicate)"),
+                            build_results_view(page)
+                        ]
+                    ).pack(side="right")
+                else:
+                    ctk.CTkButton(
+                        actions_frame, text="Not Dup ❓", width=90, height=28,
+                        font=ctk.CTkFont(size=11, weight="bold"),
+                        fg_color="#27ae60", hover_color="#2ecc71",
+                        corner_radius=6,
+                        command=lambda p=pair: [
+                            self._mark_as_non_duplicate(p["record_a"], p["record_b"]),
+                            update_show_marked_label(),
+                            rebuild_unmark_btn(),
+                            title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])} marked as non-duplicate)"),
+                            build_results_view(page)
+                        ]
+                    ).pack(side="right")
+
         # Multi-core Toggle
         multicore_var = ctk.BooleanVar(value=self._get_duplicate_multiprocessing())
         def toggle_multicore():
             self._save_duplicate_multiprocessing(multicore_var.get())
-            # Restart if active
-            is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
-            if is_computing:
-                self._compute_global_duplicates(force_restart=True)
-            popup.destroy()
-            self._show_global_duplicate_audit(0)
+            run_in_place_recompute()
             
-        ctk.CTkCheckBox(
-            controls_frame, text="Use Multi-core (Faster)", variable=multicore_var,
+        multicore_cb = ctk.CTkCheckBox(
+            sidebar_frame, text="Use Multi-core", variable=multicore_var,
             command=toggle_multicore, font=ctk.CTkFont(size=12, weight="bold")
-        ).pack(side="left", padx=(0, 20))
+        )
+        multicore_cb.pack(anchor="w", padx=15, pady=(5, 2))
         
-        thresh_frame = ctk.CTkFrame(controls_frame, fg_color="transparent")
-        thresh_frame.pack(side="left", padx=(0, 20))
-        ctk.CTkLabel(thresh_frame, text="Threshold (%):", font=ctk.CTkFont(size=12, weight="bold"), text_color="#ccc").pack(side="left", padx=(0, 5))
+        multicore_sub = ctk.CTkLabel(
+            sidebar_frame, text="Enable multi-core processing for faster results.",
+            font=ctk.CTkFont(size=10), text_color="#888", wraplength=190, justify="left"
+        )
+        multicore_sub.pack(anchor="w", padx=15, pady=(0, 10))
+        
+        # Threshold Settings
+        thresh_lbl = ctk.CTkLabel(
+            sidebar_frame, text="Threshold (%):",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color="#ccc"
+        )
+        thresh_lbl.pack(anchor="w", padx=15, pady=(10, 2))
+        
+        thresh_entry_frame = ctk.CTkFrame(sidebar_frame, fg_color="transparent")
+        thresh_entry_frame.pack(fill="x", padx=15, pady=(0, 4))
+        
         thresh_var = ctk.StringVar(value=str(self._get_duplicate_threshold()))
-        ctk.CTkEntry(thresh_frame, textvariable=thresh_var, width=35, height=26, font=ctk.CTkFont(size=12)).pack(side="left")
+        thresh_entry = ctk.CTkEntry(
+            thresh_entry_frame, textvariable=thresh_var,
+            height=28, font=ctk.CTkFont(size=12)
+        )
+        thresh_entry.pack(side="left", fill="x", expand=True, padx=(0, 5))
         
         def save_threshold():
             try:
@@ -185,227 +543,115 @@ class DuplicateUIMixin:
                 if 1 <= val <= 100:
                     old_val = self._get_duplicate_threshold()
                     self._save_duplicate_threshold(val)
-                    # Clear cache and recompute on change
                     if val != old_val:
-                        self._duplicate_pairs_cache = None
-                        self._compute_global_duplicates(force_restart=True)
-                    popup.destroy()
-                    self._show_global_duplicate_audit(0)
+                        run_in_place_recompute()
                 else:
                     messagebox.showerror("Error", "Threshold must be between 1 and 100.")
             except ValueError:
                 messagebox.showerror("Error", "Invalid threshold value.")
                 
-        ctk.CTkButton(
-            thresh_frame, text="Save", width=45, height=26, 
+        save_btn = ctk.CTkButton(
+            thresh_entry_frame, text="Save", height=28,
             font=ctk.CTkFont(size=11, weight="bold"),
             fg_color="#2980b9", hover_color="#3498db",
             command=save_threshold
-        ).pack(side="left", padx=(5, 0))
+        )
+        save_btn.pack(side="left", fill="x", expand=True, padx=(5, 0))
         
-        # Main content area
-        content_frame = ctk.CTkFrame(popup, fg_color="transparent")
-        content_frame.pack(fill="both", expand=True)
-
-        use_mp = self._get_duplicate_multiprocessing()
-        current_progress = getattr(self, '_current_duplicate_progress', 0.0)
+        thresh_sub = ctk.CTkLabel(
+            sidebar_frame, text="Show potential duplicates with match % equal to or above the threshold.",
+            font=ctk.CTkFont(size=9), text_color="#888", wraplength=190, justify="left"
+        )
+        thresh_sub.pack(anchor="w", padx=15, pady=(0, 10))
         
-        if is_computing:
-            title_label.configure(text="⚠️ Global Duplicate Audit (Computing...)")
-            if current_progress > 0.0:
-                pct = int(current_progress * 100)
-                loading_text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
+        # Show Marked Toggle
+        show_marked_var = ctk.BooleanVar(value=getattr(self, "_show_marked_duplicates", False))
+        def toggle_show_marked():
+            self._show_marked_duplicates = show_marked_var.get()
+            rebuild_unmark_btn()
+            build_results_view(0)
+            
+        non_dups_count = len(self._load_non_duplicates())
+        checkbox_text = f"Show Marked ({non_dups_count})" if non_dups_count > 0 else "Show Marked"
+        
+        show_marked_cb = ctk.CTkCheckBox(
+            sidebar_frame, text=checkbox_text, variable=show_marked_var,
+            command=toggle_show_marked, font=ctk.CTkFont(size=12, weight="bold")
+        )
+        show_marked_cb.pack(anchor="w", padx=15, pady=(10, 2))
+        
+        show_marked_sub = ctk.CTkLabel(
+            sidebar_frame, text="Display items marked as non-duplicate.",
+            font=ctk.CTkFont(size=10), text_color="#888", wraplength=190, justify="left"
+        )
+        show_marked_sub.pack(anchor="w", padx=15, pady=(0, 15))
+        
+        # Force Recalc Button (Bordered red button, full width)
+        def force_recompute():
+            run_in_place_recompute()
+ 
+        force_btn = ctk.CTkButton(
+            sidebar_frame, text="Force Recalc", width=190, height=32,
+            image=_get_refresh_icon("#e74c3c"),
+            font=ctk.CTkFont(size=12, weight="bold"),
+            fg_color="transparent", border_color="#e74c3c", border_width=1,
+            text_color="#e74c3c", hover_color="#2c2c36",
+            corner_radius=6,
+            command=force_recompute
+        )
+        force_btn._image_label_spacing = 6
+        force_btn.pack(fill="x", padx=15, pady=(5, 2))
+        
+        force_sub = ctk.CTkLabel(
+            sidebar_frame, text="Recalculate all comparisons.",
+            font=ctk.CTkFont(size=10), text_color="#888", wraplength=190, justify="left"
+        )
+        force_sub.pack(anchor="w", padx=15, pady=(0, 15))
+ 
+        # Close button at the bottom of controls sidebar
+        close_btn = ctk.CTkButton(
+            sidebar_frame,
+            text="Close",
+            image=_get_close_icon("#fff"),
+            width=190, height=32,
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=popup.destroy,
+            fg_color="#34495e",
+            hover_color="#2c3e50"
+        )
+        close_btn._image_label_spacing = 6
+        close_btn.pack(side="bottom", fill="x", padx=15, pady=15)
+        
+        # Populate initial view
+        rebuild_unmark_btn()
+        
+        # Check if loading screen is needed
+        if cache_is_missing or is_computing:
+            if is_computing:
+                if current_progress > 0.0:
+                    pct = int(current_progress * 100)
+                    loading_text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
+                else:
+                    loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
             else:
                 loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
-        else:
-            loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
-            
-        if cache_is_missing or is_computing:
+                
             self._duplicate_popup_lbl = ctk.CTkLabel(
-                content_frame, text=loading_text,
+                left_frame, text=loading_text,
                 font=ctk.CTkFont(size=18, weight="bold"),
                 text_color="#f39c12"
             )
             self._duplicate_popup_lbl.place(relx=0.5, rely=0.45, anchor="center")
             
-            self._duplicate_popup_pb = ctk.CTkProgressBar(content_frame, width=300, fg_color="#2b2b36", progress_color="#f39c12")
+            self._duplicate_popup_pb = ctk.CTkProgressBar(left_frame, width=300, fg_color="#2b2b36", progress_color="#f39c12")
             self._duplicate_popup_pb.place(relx=0.5, rely=0.55, anchor="center")
             self._duplicate_popup_pb.set(current_progress)
             
-            def check_computing():
-                if hasattr(self, '_duplicate_computing') and self._duplicate_computing:
-                    if popup.winfo_exists():
-                        popup.after(200, check_computing)
-                else:
-                    if popup.winfo_exists():
-                        popup.destroy()
-                        self._show_global_duplicate_audit(start_page)
             check_computing()
-            return
+        else:
+            build_results_view(page)
         
-        show_marked_var = ctk.BooleanVar(value=getattr(self, "_show_marked_duplicates", False))
-        def toggle_show_marked():
-            self._show_marked_duplicates = show_marked_var.get()
-            popup.destroy()
-            self._show_global_duplicate_audit(0)
-            
-        ctk.CTkCheckBox(
-            controls_frame, text="Show Marked", variable=show_marked_var,
-            command=toggle_show_marked, font=ctk.CTkFont(size=12)
-        ).pack(side="left", padx=(0, 15))
-        
-        if show_marked_var.get() and self._load_non_duplicates():
-            ctk.CTkButton(
-                controls_frame, text="Unmark All", width=90, height=28,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                fg_color="#c0392b", hover_color="#e74c3c",
-                corner_radius=6,
-                command=lambda: [self._unmark_all_non_duplicates(), popup.destroy(), self._show_global_duplicate_audit(page)]
-            ).pack(side="left")
-            
-        cache_to_show = (self._raw_duplicate_pairs_cache if show_marked_var.get() else self._duplicate_pairs_cache) or []
-        
-        PAGE_SIZE = 50
-        total_pages = max(1, (len(cache_to_show) + PAGE_SIZE - 1) // PAGE_SIZE)
-        page = max(0, min(page, total_pages - 1))
-        
-        # Scrollable list of matches
-        scroll_frame = ctk.CTkScrollableFrame(content_frame, fg_color="transparent")
-        scroll_frame.pack(side="top", fill="both", expand=True, padx=20, pady=(15, 0))
-        
-        start_idx = page * PAGE_SIZE
-        end_idx = min(start_idx + PAGE_SIZE, len(cache_to_show))
-        display_list = cache_to_show[start_idx:end_idx]
-        
-        if not display_list:
-            empty_msg = "No duplicates found at the current threshold."
-            if not show_marked_var.get() and len(self._raw_duplicate_pairs_cache) > 0:
-                empty_msg = "All duplicates have been marked as Non-Duplicate.\nCheck 'Show Marked' to view them."
-                
-            ctk.CTkLabel(
-                scroll_frame, text=empty_msg,
-                font=ctk.CTkFont(size=14, slant="italic"),
-                text_color="#888"
-            ).pack(pady=40)
-        
-        for pair in display_list:
-            idx_a = pair["idx_a"]
-            idx_b = pair["idx_b"]
-            sim = pair["similarity"]
-            combined_sim = pair["combined_sim"]
-            heading_sim = pair["heading_sim"]
-            text_sim = pair.get("text_sim", 0.0)
-            
-            sim_pct = int(sim * 100)
-            
-            # -- Card row --
-            row_frame = ctk.CTkFrame(scroll_frame, fg_color="#2b2b36", corner_radius=8,
-                                      border_width=1, border_color="#444")
-            row_frame.pack(fill="x", pady=4, ipady=6)
-            
-            # Badges for both records
-            badge_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            badge_frame.pack(side="left", padx=(10, 8), pady=6)
-            
-            color_a = "#e74c3c" if sim_pct >= 80 else ("#f39c12" if sim_pct >= 60 else "#3498db")
-            
-            badge_a = ctk.CTkLabel(
-                badge_frame, text=f" #{idx_a + 1} ",
-                font=ctk.CTkFont(size=12, weight="bold"),
-                fg_color=color_a, corner_radius=6,
-                text_color="white", width=45
-            )
-            badge_a.pack(side="left", padx=2)
-            
-            ctk.CTkLabel(badge_frame, text="↔", font=ctk.CTkFont(size=14, weight="bold"), text_color="#aaa").pack(side="left", padx=2)
-            
-            badge_b = ctk.CTkLabel(
-                badge_frame, text=f" #{idx_b + 1} ",
-                font=ctk.CTkFont(size=12, weight="bold"),
-                fg_color=color_a, corner_radius=6,
-                text_color="white", width=45
-            )
-            badge_b.pack(side="left", padx=2)
-            
-            # Match info text
-            info_text = f"{sim_pct}% match  ·  Head+Body: {int(combined_sim*100)}%  ·  Heading: {int(heading_sim*100)}%  ·  Text: {int(text_sim*100)}%"
-            ctk.CTkLabel(
-                row_frame, text=info_text,
-                font=ctk.CTkFont(size=11),
-                text_color="#ccc", anchor="w"
-            ).pack(side="left", fill="x", expand=True, padx=(5, 8))
-            
-            # Action buttons frame
-            actions_frame = ctk.CTkFrame(row_frame, fg_color="transparent")
-            actions_frame.pack(side="right", padx=(0, 10), pady=6)
-            
-            # Compare button
-            ctk.CTkButton(
-                actions_frame, text="🔍 Compare", width=90, height=28,
-                font=ctk.CTkFont(size=11, weight="bold"),
-                fg_color="#6c5ce7", hover_color="#5a4bd1",
-                corner_radius=6,
-                command=lambda p=pair: self._show_side_by_side_comparison(
-                    p["record_a"], p["record_b"], p, parent_popup=popup,
-                    on_mark_change_callback=lambda: [popup.destroy(), self._show_global_duplicate_audit(page)]
-                )
-            ).pack(side="right", padx=(4, 0))
 
-            # Not Duplicate / Restore button
-            non_dups = self._load_non_duplicates()
-            id_a_str = str(pair["record_a"].get("id", ""))
-            id_b_str = str(pair["record_b"].get("id", ""))
-            pair_key = f"{min(id_a_str, id_b_str)}_{max(id_a_str, id_b_str)}"
-            is_marked = pair_key in non_dups
-            
-            if is_marked:
-                ctk.CTkButton(
-                    actions_frame, text="Restore Duplicate ♻️", width=140, height=28,
-                    font=ctk.CTkFont(size=11, weight="bold"),
-                    fg_color="#e67e22", hover_color="#d35400",
-                    corner_radius=6,
-                    command=lambda p=pair: [self._unmark_as_non_duplicate(p["record_a"], p["record_b"]), popup.destroy(), self._show_global_duplicate_audit(page)]
-                ).pack(side="right")
-            else:
-                ctk.CTkButton(
-                    actions_frame, text="Non Duplicate❓", width=140, height=28,
-                    font=ctk.CTkFont(size=11, weight="bold"),
-                    fg_color="#27ae60", hover_color="#2ecc71",
-                    corner_radius=6,
-                    command=lambda p=pair: [self._mark_as_non_duplicate(p["record_a"], p["record_b"]), popup.destroy(), self._show_global_duplicate_audit(page)]
-                ).pack(side="right")
-                
-        # Pagination controls at bottom
-        pagination_frame = ctk.CTkFrame(content_frame, fg_color="transparent", height=40)
-        pagination_frame.pack(side="bottom", fill="x", pady=10, padx=20)
-        
-        def go_prev():
-            if page > 0:
-                popup.destroy()
-                self._show_global_duplicate_audit(page - 1)
-                
-        def go_next():
-            if page < total_pages - 1:
-                popup.destroy()
-                self._show_global_duplicate_audit(page + 1)
-        
-        prev_btn = ctk.CTkButton(pagination_frame, text="◀ Prev", width=70, state="normal" if page > 0 else "disabled", command=go_prev)
-        prev_btn.pack(side="left")
-        
-        ctk.CTkLabel(pagination_frame, text=f"Page {page + 1} of {total_pages}", font=ctk.CTkFont(size=12, weight="bold")).pack(side="left", expand=True)
-        
-        next_btn = ctk.CTkButton(pagination_frame, text="Next ▶", width=70, state="normal" if page < total_pages - 1 else "disabled", command=go_next)
-        next_btn.pack(side="left")
-        
-        close_btn = ctk.CTkButton(
-            pagination_frame,
-            text="Close",
-            width=120,
-            command=popup.destroy,
-            fg_color="#34495e",
-            hover_color="#2c3e50"
-        )
-        close_btn.pack(side="right")
 
     def _show_side_by_side_comparison(self, record_a, record_b, pair_info, parent_popup=None, on_mark_change_callback=None):
         popup = ctk.CTkToplevel(parent_popup if parent_popup else self)
