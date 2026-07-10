@@ -49,8 +49,8 @@ mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && cu
 
 You can switch between the app's three primary modes using the dropdown switcher at the top left of the screen:
 
-- **Annotate Mode**: Add new entries to the dataset. Select labels, add text, drag-and-drop media, and save.
-- **Review Mode**: Browse through your saved annotations. You can edit mistakes, delete entries, and view attached media in full resolution.
+- **Annotate Mode**: Add new entries to the dataset. Select labels, add text, drag-and-drop media, quickly Google search headings, and save.
+- **Review Mode**: Browse through your saved annotations. You can edit mistakes, delete entries, search and filter entries by keywords, and view attached media in full resolution.
 - **Re-label Mode**: Conduct inter-rater reliability tests. Browse a pre-generated sample of records with the previous labels hidden to prevent bias.
 - **📊 Detailed Stats**: Click the button at the top to open a comprehensive, interactive dashboard. Click row/column headers to dynamically calculate multi-modal distribution percentages.
 
@@ -134,6 +134,7 @@ Fake News Dataset Annotator/
 │       │   ├── duplicate_popup.py  # Interactive side-by-side duplicate comparison modal
 │       │   ├── filter_panel.py     # Advanced search filter query criteria dialog
 │       │   ├── scripts_popup.py    # Merging datasets & generating agreement samples launcher
+│       │   ├── search_popup.py     # Keyword search modal dialog for Review mode
 │       │   ├── dialogs.py          # Custom CTk confirmation yes/no/cancel modals
 │       │   └── widgets.py          # FlowFrame wrapping container class
 │       ├── modes/                  # Screen views layout managers

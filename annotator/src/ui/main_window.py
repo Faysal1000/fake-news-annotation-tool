@@ -91,12 +91,12 @@ class AnnotatorTool(
                 with open(VERSION_FILE, "r") as f:
                     v_data = json.load(f)
                     version_str = v_data.get("version", "")
-                self.title(f"📰 Fake News Dataset Annotator {version_str}".strip())
+                self.title(f"Fake News Dataset Annotator {version_str}".strip())
             else:
-                self.title("📰 Fake News Dataset Annotator")
+                self.title("Fake News Dataset Annotator")
         except Exception as e:
             print(f"[WARNING] Failed to load version: {e}")
-            self.title("📰 Fake News Dataset Annotator")
+            self.title("Fake News Dataset Annotator")
         
         # Set application icon for window and taskbar
         try:

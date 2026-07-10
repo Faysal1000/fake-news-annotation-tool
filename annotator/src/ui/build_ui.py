@@ -88,8 +88,32 @@ class UIBuilderMixin:
                                           corner_radius=6)
         self.scripts_btn.pack(side="right", padx=(4, 0))
 
-        ctk.CTkLabel(top_bar, text="📰 Fake News Dataset Annotator",
-                     font=ctk.CTkFont(size=22, weight="bold")).place(relx=0.5, rely=0.5, anchor="center")
+        # Load App Icon for Main Title
+        self.app_title_icon = None
+        app_icon_path = ASSETS_DIR / "app_icon.png"
+        if app_icon_path.exists():
+            try:
+                a_img = Image.open(app_icon_path)
+                try:
+                    resample_filter = Image.Resampling.LANCZOS
+                except AttributeError:
+                    try:
+                        resample_filter = Image.LANCZOS
+                    except AttributeError:
+                        resample_filter = Image.ANTIALIAS
+                a_img = a_img.resize((22, 22), resample_filter)
+                self.app_title_icon = ctk.CTkImage(light_image=a_img, dark_image=a_img, size=(22, 22))
+            except Exception as e:
+                print(f"[WARNING] Failed to load app_icon.png for title: {e}")
+
+        self.title_label = ctk.CTkLabel(
+            top_bar, 
+            text=" Fake News Dataset Annotator",
+            image=self.app_title_icon if self.app_title_icon else None,
+            compound="left",
+            font=ctk.CTkFont(size=22, weight="bold")
+        )
+        self.title_label.place(relx=0.5, rely=0.5, anchor="center")
 
         # Top stats cards area
         self.stats_frame = FlowFrame(main, fg_color="transparent")
