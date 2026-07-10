@@ -127,8 +127,32 @@ class StatsMixin:
             w.bind("<Leave>", on_leave)
             if command:
                 w.bind("<Button-1>", lambda e: command())
-                
-        return badge
+        return badge, count_lbl
+
+    def _animate_duplicate_dots(self, label):
+        """Animates jumping dots for the duplicate indicator while computing."""
+        if not label or not label.winfo_exists():
+            return
+            
+        is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
+        cache_missing = not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None
+        
+        # If calculation has finished, refresh stats to show final count
+        if not is_computing and not cache_missing:
+            self._update_stats()
+            return
+            
+        current = label.cget("text")
+        # Unicode \u2008 is punctuation space, matching the exact width of a period
+        if current == ".\u2008\u2008":
+            next_text = "..\u2008"
+        elif current == "..\u2008":
+            next_text = "..."
+        else:
+            next_text = ".\u2008\u2008"
+            
+        label.configure(text=next_text)
+        self.after(500, lambda: self._animate_duplicate_dots(label))
 
     def _update_stats(self):
         """
@@ -268,7 +292,7 @@ class StatsMixin:
             cache_missing = not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None
             
             if cache_missing or is_computing:
-                dup_count = "..."
+                dup_count = ".\u2008\u2008"
             else:
                 unique_records_with_dups = set()
                 if self._duplicate_pairs_cache is not None:
@@ -277,10 +301,12 @@ class StatsMixin:
                         unique_records_with_dups.add(pair["idx_b"])
                 dup_count = len(unique_records_with_dups)
                 
-            self._create_clickable_stat_badge(
+            badge, count_lbl = self._create_clickable_stat_badge(
                 self.stats_frame, "Duplicates", dup_count, "#e67e22",
                 command=self._show_global_duplicate_audit
             )
+            if cache_missing or is_computing:
+                self._animate_duplicate_dots(count_lbl)
 
         
         # Create a "See More" badge-style button

@@ -29,6 +29,7 @@ class ReviewModeMixin:
                 mtime = CSV_PATH.stat().st_mtime
                 size = CSV_PATH.stat().st_size
                 if (self.all_dataset_records and 
+                    getattr(self, 'dataset_records', None) and 
                     mtime == getattr(self, '_last_loaded_csv_mtime', None) and 
                     size == getattr(self, '_last_loaded_csv_size', None)):
                     # No changes on disk; just apply active filters and skip clearing cache/starting threads
@@ -42,6 +43,8 @@ class ReviewModeMixin:
         if hasattr(self, '_duplicate_computing'):
             self._duplicate_computing = False
         self._duplicate_pairs_cache = None
+        self._cached_records_data = None
+        self.after(200, lambda: self._compute_global_duplicates(force_restart=True))
 
         # Reset the master records container list
         self.all_dataset_records = []
@@ -672,6 +675,8 @@ class ReviewModeMixin:
         if hasattr(self, '_duplicate_computing'):
             self._duplicate_computing = False
         self._duplicate_pairs_cache = None
+        self._cached_records_data = None
+        self.after(200, lambda: self._compute_global_duplicates(force_restart=True))
 
         # Open CSV file with standard settings: newline protection and utf-8 encoding support
 

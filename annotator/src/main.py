@@ -11,5 +11,7 @@ _check_and_install()
 from ui.main_window import AnnotatorTool
 
 if __name__ == "__main__":
+    import multiprocessing
+    multiprocessing.freeze_support()
     app = AnnotatorTool()
     app.mainloop()

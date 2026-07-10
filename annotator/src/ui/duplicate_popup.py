@@ -107,15 +107,22 @@ class DuplicateUIMixin:
 
     def _show_global_duplicate_audit(self, start_page=0):
         page = start_page
-        cache_is_missing = not hasattr(self, '_duplicate_pairs_cache') or self._duplicate_pairs_cache is None
+        if not hasattr(self, '_duplicate_pairs_cache'):
+            self._duplicate_pairs_cache = None
+        if not hasattr(self, '_raw_duplicate_pairs_cache'):
+            self._raw_duplicate_pairs_cache = None
+            
+        cache_is_missing = self._duplicate_pairs_cache is None
         is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
         
         if cache_is_missing and not is_computing:
             self._duplicate_computing = True
             is_computing = True
+            # Initialize progress
+            self._current_duplicate_progress = 0.0
             self.after(500, self._compute_global_duplicates)
             
-        if cache_is_missing:
+        if cache_is_missing and not is_computing:
             self._duplicate_pairs_cache = []
             self._raw_duplicate_pairs_cache = []
             
@@ -154,7 +161,10 @@ class DuplicateUIMixin:
         multicore_var = ctk.BooleanVar(value=self._get_duplicate_multiprocessing())
         def toggle_multicore():
             self._save_duplicate_multiprocessing(multicore_var.get())
-            self._compute_global_duplicates(force_restart=True)
+            # Restart if active
+            is_computing = hasattr(self, '_duplicate_computing') and self._duplicate_computing
+            if is_computing:
+                self._compute_global_duplicates(force_restart=True)
             popup.destroy()
             self._show_global_duplicate_audit(0)
             
@@ -173,8 +183,12 @@ class DuplicateUIMixin:
             try:
                 val = int(thresh_var.get().strip())
                 if 1 <= val <= 100:
+                    old_val = self._get_duplicate_threshold()
                     self._save_duplicate_threshold(val)
-                    self._compute_global_duplicates(force_restart=True)
+                    # Clear cache and recompute on change
+                    if val != old_val:
+                        self._duplicate_pairs_cache = None
+                        self._compute_global_duplicates(force_restart=True)
                     popup.destroy()
                     self._show_global_duplicate_audit(0)
                 else:
@@ -194,9 +208,15 @@ class DuplicateUIMixin:
         content_frame.pack(fill="both", expand=True)
 
         use_mp = self._get_duplicate_multiprocessing()
+        current_progress = getattr(self, '_current_duplicate_progress', 0.0)
+        
         if is_computing:
             title_label.configure(text="⚠️ Global Duplicate Audit (Computing...)")
-            loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
+            if current_progress > 0.0:
+                pct = int(current_progress * 100)
+                loading_text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
+            else:
+                loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
         else:
             loading_text = "🚀 Initializing multi-core workers...\nPlease wait." if use_mp else "⏳ Calculating duplicates...\nPlease wait."
             
@@ -210,7 +230,7 @@ class DuplicateUIMixin:
             
             self._duplicate_popup_pb = ctk.CTkProgressBar(content_frame, width=300, fg_color="#2b2b36", progress_color="#f39c12")
             self._duplicate_popup_pb.place(relx=0.5, rely=0.55, anchor="center")
-            self._duplicate_popup_pb.set(0.0)
+            self._duplicate_popup_pb.set(current_progress)
             
             def check_computing():
                 if hasattr(self, '_duplicate_computing') and self._duplicate_computing:

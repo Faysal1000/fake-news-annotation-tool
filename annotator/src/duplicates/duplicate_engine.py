@@ -15,6 +15,8 @@ from constants import CSV_COLUMNS
 from analysis.text_similarity import calculate_heading_similarity, calculate_jaccard_similarity, calculate_containment_similarity, clean_text
 from data.config_manager import get_full_config, save_full_config
 
+import difflib
+
 _worker_records = None
 _worker_index = None
 
@@ -70,14 +72,19 @@ def _evaluate_duplicate_chunk(args):
                 words_i_h = data_i["words_heading"]
                 words_j_h = data_j["words_heading"]
                 if len(words_i_h.intersection(words_j_h)) > 0 or len(h_i) < 20 or len(h_j) < 20:
-                    heading_sim = calculate_heading_similarity(h_i, h_j)
+                    ratio = difflib.SequenceMatcher(None, h_i.lower(), h_j.lower()).ratio()
+                    u_h = len(words_i_h.union(words_j_h))
+                    jacc_h = len(words_i_h.intersection(words_j_h)) / u_h if u_h > 0 else 0.0
+                    heading_sim = max(ratio, jacc_h)
                     
             text_sim = 0.0
-            t_i = data_i["text"]
-            t_j = data_j["text"]
-            if t_i and t_j:
-                text_jaccard = calculate_jaccard_similarity(t_i, t_j)
-                text_containment = calculate_containment_similarity(t_i, t_j)
+            words_i_t = data_i["words_text"]
+            words_j_t = data_j["words_text"]
+            if words_i_t and words_j_t:
+                intersection_t = len(words_i_t.intersection(words_j_t))
+                union_t = len(words_i_t.union(words_j_t))
+                text_jaccard = intersection_t / union_t if union_t > 0 else 0.0
+                text_containment = intersection_t / len(words_i_t) if len(words_i_t) > 0 else 0.0
                 text_sim = max(text_jaccard, text_containment)
                 
             max_sim = max(combined_sim, heading_sim, text_sim)
@@ -122,6 +129,52 @@ class DuplicateEngineMixin:
         if hasattr(self, "heading_dup_badge") and self.heading_dup_badge:
             self._update_heading_dup_badge_ui("hidden")
 
+    def _get_precomputed_data(self):
+        """
+        Ensures the cleaned records and inverted index are precomputed and cached.
+        Returns (global_records_data, global_inverted_index).
+        """
+        records = self._get_all_records_for_dup_check()
+        
+        # Return cached copy if available and matches records size
+        if (hasattr(self, '_cached_records_data') and 
+            self._cached_records_data is not None and 
+            len(self._cached_records_data) == len(records)):
+            return self._cached_records_data, self._cached_inverted_index
+            
+        # Re-index all records
+        global_records_data = []
+        for idx, rec in enumerate(records):
+            h = rec.get("heading", "") or ""
+            t = rec.get("text", "") or ""
+            comb = f"{h} {t}".strip()
+            
+            words_comb = set(clean_text(comb))
+            words_h = set(clean_text(h))
+            words_t = set(clean_text(t))
+            
+            global_records_data.append({
+                "idx": idx,
+                "record": rec,
+                "heading": h,
+                "text": t,
+                "combined": comb,
+                "words_combined": words_comb,
+                "words_heading": words_h,
+                "words_text": words_t
+            })
+            
+        global_inverted_index = {}
+        for idx, data in enumerate(global_records_data):
+            for word in data["words_combined"]:
+                if word not in global_inverted_index:
+                    global_inverted_index[word] = []
+                global_inverted_index[word].append(idx)
+                
+        self._cached_records_data = global_records_data
+        self._cached_inverted_index = global_inverted_index
+        return global_records_data, global_inverted_index
+
     def _get_all_records_for_dup_check(self):
         """
         Retrieves all records from dataset.csv for duplicate verification.
@@ -138,6 +191,11 @@ class DuplicateEngineMixin:
                     for row in reader:
                         records.append(row)
                 self.all_dataset_records = records
+                try:
+                    self._last_loaded_csv_mtime = CSV_PATH.stat().st_mtime
+                    self._last_loaded_csv_size = CSV_PATH.stat().st_size
+                except Exception:
+                    pass
             except Exception as e:
                 print(f"[WARNING] Failed to read dataset.csv for duplicate check: {e}")
         return records
@@ -214,7 +272,7 @@ class DuplicateEngineMixin:
         """
         Audits the current record in Review Mode against other records for duplicates.
         If duplicates exist, shows the clickable warning text next to the heading label.
-        Calculates in the background using self.after to avoid freezing the UI.
+        Calculates in the background using a thread to avoid freezing the UI.
         """
         if self.current_mode != "review":
             self._hide_duplicate_warnings()
@@ -247,117 +305,107 @@ class DuplicateEngineMixin:
         self._current_inline_dup_check_id = getattr(self, '_current_inline_dup_check_id', 0) + 1
         check_id = self._current_inline_dup_check_id
         
-        records = self._get_all_records_for_dup_check()
-        if not records:
-            self._hide_duplicate_warnings()
-            return
-            
-        # Start asynchronous batch comparisons
-        self.after(5, lambda: self._process_inline_dup_batch(
-            check_id=check_id,
-            records=records,
-            current_heading=current_heading,
-            current_text=current_text,
-            current_id=current_id,
-            matches=[],
-            start_idx=0
-        ))
+        # Run query asynchronously
+        thread = threading.Thread(target=self._inline_dup_thread_worker, args=(check_id, current_heading, current_text, current_id), daemon=True)
+        thread.start()
 
-    def _process_inline_dup_batch(self, check_id, records, current_heading, current_text, current_id, matches, start_idx):
-        # If user has moved to another record, abort this stale calculation
+    def _inline_dup_thread_worker(self, check_id, current_heading, current_text, current_id):
         if getattr(self, '_current_inline_dup_check_id', 0) != check_id:
             return
             
-        n_records = len(records)
-        if start_idx >= n_records:
-            # Done!
-            matches.sort(key=lambda x: x["similarity"], reverse=True)
-            self._current_record_matches = matches
-            count = len(matches)
-            if count > 0:
-                self._update_heading_dup_badge_ui("duplicates_found", count=count)
-            else:
-                self._update_heading_dup_badge_ui("no_duplicates")
-            return
+        try:
+            # Load cached dataset representation
+            global_records_data, global_inverted_index = self._get_precomputed_data()
             
-        # Process in batches of 20 records
-        batch_size = 20
-        end_idx = min(start_idx + batch_size, n_records)
-        
-        # Precompute current sets
-        words_i_h = set(clean_text(current_heading))
-        words_i_text = set(clean_text(current_text))
-        current_combined = f"{current_heading or ''} {current_text or ''}".strip()
-        words_i_comb = words_i_h.union(words_i_text)
-        
-        for idx in range(start_idx, end_idx):
-            rec = records[idx]
-            rec_id = rec.get("id")
-            if current_id and rec_id == current_id:
-                continue
-                
-            rec_heading = rec.get("heading", "")
-            rec_text = rec.get("text", "")
-            rec_combined = f"{rec_heading} {rec_text}".strip()
+            words_i_h = set(clean_text(current_heading))
+            words_i_text = set(clean_text(current_text))
+            words_i_comb = words_i_h.union(words_i_text)
             
-            if not rec_combined:
-                continue
-                
-            words_j_h = set(clean_text(rec_heading))
-            words_j_text = set(clean_text(rec_text))
-            words_j_comb = words_j_h.union(words_j_text)
-            
-            # Heading similarity (heading-to-heading)
-            heading_sim = 0.0
-            if current_heading and rec_heading:
-                # SequenceMatcher is slow, only do it if they share words or are short
-                if len(words_i_h.intersection(words_j_h)) > 0 or len(current_heading) < 20 or len(rec_heading) < 20:
-                    heading_sim = calculate_heading_similarity(current_heading, rec_heading)
-                    
-            # Text similarity (text-to-text)
-            text_sim = 0.0
-            if current_text and rec_text:
-                text_jaccard = len(words_i_text.intersection(words_j_text)) / len(words_i_text.union(words_j_text)) if words_i_text or words_j_text else 0.0
-                text_containment = len(words_i_text.intersection(words_j_text)) / len(words_i_text) if words_i_text else 0.0
-                text_sim = max(text_jaccard, text_containment)
-                
-            # Combined similarity (head+body with head+body)
-            intersection_len = len(words_i_comb.intersection(words_j_comb))
-            union_len = len(words_i_comb.union(words_j_comb))
-            combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
-            
-            combined_containment = 0.0
-            if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
-                containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
-                containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
-                combined_containment = max(containment_i_j, containment_j_i)
-                
-            combined_sim = max(combined_jaccard, combined_containment)
-            
-            max_sim = max(combined_sim, heading_sim, text_sim)
+            matches = []
             threshold = self._get_duplicate_threshold() / 100.0
-            if max_sim >= threshold:
-                matches.append({
-                    "row_num": idx + 1,
-                    "record": rec,
-                    "similarity": max_sim,
-                    "combined_sim": combined_sim,
-                    "heading_sim": heading_sim,
-                    "text_sim": text_sim,
-                    "new_heading_ref": current_heading,
-                    "new_text_ref": current_text
-                })
+            
+            # Find candidates with word overlaps
+            candidates = {}
+            for word in words_i_comb:
+                if word in global_inverted_index:
+                    for j in global_inverted_index[word]:
+                        candidates[j] = candidates.get(j, 0) + 1
+                        
+            # Evaluate candidates
+            for j, intersection_len in candidates.items():
+                if getattr(self, '_current_inline_dup_check_id', 0) != check_id:
+                    return
+                    
+                data_j = global_records_data[j]
+                rec_id = data_j["record"].get("id")
+                if current_id and rec_id == current_id:
+                    continue
+                    
+                words_j_comb = data_j["words_combined"]
+                union_len = len(words_i_comb) + len(words_j_comb) - intersection_len
+                combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
                 
-        # Schedule next batch
-        self.after(5, lambda: self._process_inline_dup_batch(
-            check_id=check_id,
-            records=records,
-            current_heading=current_heading,
-            current_text=current_text,
-            current_id=current_id,
-            matches=matches,
-            start_idx=end_idx
-        ))
+                combined_containment = 0.0
+                if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
+                    containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
+                    containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
+                    combined_containment = max(containment_i_j, containment_j_i)
+                    
+                combined_sim = max(combined_jaccard, combined_containment)
+                
+                heading_sim = 0.0
+                h_j = data_j["heading"]
+                if current_heading and h_j:
+                    words_j_h = data_j["words_heading"]
+                    if len(words_i_h.intersection(words_j_h)) > 0 or len(current_heading) < 20 or len(h_j) < 20:
+                        ratio = difflib.SequenceMatcher(None, current_heading.lower(), h_j.lower()).ratio()
+                        u_h = len(words_i_h.union(words_j_h))
+                        jacc_h = len(words_i_h.intersection(words_j_h)) / u_h if u_h > 0 else 0.0
+                        heading_sim = max(ratio, jacc_h)
+                        
+                text_sim = 0.0
+                if current_text and data_j["text"]:
+                    words_j_t = data_j["words_text"]
+                    if words_i_text and words_j_t:
+                        intersection_t = len(words_i_text.intersection(words_j_t))
+                        union_t = len(words_i_text.union(words_j_t))
+                        text_jaccard = intersection_t / union_t if union_t > 0 else 0.0
+                        text_containment = intersection_t / len(words_i_text) if len(words_i_text) > 0 else 0.0
+                        text_sim = max(text_jaccard, text_containment)
+                        
+                max_sim = max(combined_sim, heading_sim, text_sim)
+                if max_sim >= threshold:
+                    matches.append({
+                        "row_num": j + 1,
+                        "record": data_j["record"],
+                        "similarity": max_sim,
+                        "combined_sim": combined_sim,
+                        "heading_sim": heading_sim,
+                        "text_sim": text_sim,
+                        "new_heading_ref": current_heading,
+                        "new_text_ref": current_text
+                    })
+                    
+            matches.sort(key=lambda x: x["similarity"], reverse=True)
+            
+        except Exception as e:
+            print(f"Error in inline dup thread: {e}")
+            matches = []
+            
+        # Notify main window of completion
+        if getattr(self, '_current_inline_dup_check_id', 0) == check_id:
+            self.after(0, lambda: self._on_inline_dup_done(check_id, matches))
+
+    def _on_inline_dup_done(self, check_id, matches):
+        if getattr(self, '_current_inline_dup_check_id', 0) != check_id:
+            return
+        
+        self._current_record_matches = matches
+        count = len(matches)
+        if count > 0:
+            self._update_heading_dup_badge_ui("duplicates_found", count=count)
+        else:
+            self._update_heading_dup_badge_ui("no_duplicates")
 
     def _update_heading_dup_badge_ui(self, state, count=0):
         """
@@ -431,6 +479,7 @@ class DuplicateEngineMixin:
                 return
             
         self._duplicate_computing = True
+        self._cancel_duplicate_computing = False
         
         if not hasattr(self, '_duplicate_thread_generation'):
             self._duplicate_thread_generation = 0
@@ -443,43 +492,11 @@ class DuplicateEngineMixin:
         thread.start()
 
     def _duplicate_thread_worker(self, generation):
-        # We perform the heavy computation here
         try:
-            records = self._get_all_records_for_dup_check()
-            n_records = len(records)
+            # Load cached dataset representation
+            global_records_data, global_inverted_index = self._get_precomputed_data()
+            n_records = len(global_records_data)
             
-            # Pre-compute representation for all records
-            global_records_data = []
-            for idx, rec in enumerate(records):
-                if getattr(self, '_duplicate_thread_generation', 0) != generation:
-                    return
-                h = rec.get("heading", "") or ""
-                t = rec.get("text", "") or ""
-                comb = f"{h} {t}".strip()
-                
-                words_comb = set(clean_text(comb))
-                words_h = set(clean_text(h))
-                
-                global_records_data.append({
-                    "idx": idx,
-                    "record": rec,
-                    "heading": h,
-                    "text": t,
-                    "combined": comb,
-                    "words_combined": words_comb,
-                    "words_heading": words_h
-                })
-                
-            # Build inverted index of combined words
-            global_inverted_index = {}
-            for idx, data in enumerate(global_records_data):
-                if getattr(self, '_duplicate_thread_generation', 0) != generation:
-                    return
-                for word in data["words_combined"]:
-                    if word not in global_inverted_index:
-                        global_inverted_index[word] = []
-                    global_inverted_index[word].append(idx)
-                    
             # Process all records using chunks
             pairs_cache = []
             threshold = self._get_duplicate_threshold() / 100.0
@@ -487,7 +504,7 @@ class DuplicateEngineMixin:
             
             if use_mp:
                 num_cores = os.cpu_count() or 4
-                # Slice into ~100 micro-chunks to ensure perfect load balancing of the O(N^2) load
+                # Split tasks into chunks
                 num_chunks = 100
                 chunk_size = max(1, n_records // num_chunks)
                 
@@ -496,31 +513,50 @@ class DuplicateEngineMixin:
                     end_idx = min(start_idx + chunk_size, n_records)
                     tasks.append((start_idx, end_idx, threshold))
                 
+                self.after(0, lambda g=generation: self._update_duplicate_progress(0.0, g))
                 with concurrent.futures.ProcessPoolExecutor(max_workers=num_cores, initializer=_init_worker, initargs=(global_records_data, global_inverted_index)) as executor:
                     futures = [executor.submit(_evaluate_duplicate_chunk, t) for t in tasks]
                     pending = set(futures)
                     
                     completed_chunks = 0
                     while pending:
-                        if getattr(self, '_duplicate_thread_generation', 0) != generation:
+                        if getattr(self, '_duplicate_thread_generation', 0) != generation or getattr(self, '_cancel_duplicate_computing', False):
                             executor.shutdown(wait=False, cancel_futures=True)
+                            self.after(0, lambda: self._on_duplicate_thread_done([], generation, cancelled=True))
                             return
                         done, pending = concurrent.futures.wait(pending, timeout=0.2, return_when=concurrent.futures.FIRST_COMPLETED)
                         for future in done:
                             pairs_cache.extend(future.result())
                             completed_chunks += 1
-                            progress = completed_chunks / num_chunks
+                            progress = completed_chunks / len(tasks)
                             self.after(0, lambda p=progress, g=generation: self._update_duplicate_progress(p, g))
             else:
-                update_interval = max(1, n_records // 100)
-                for i in range(n_records):
-                    if getattr(self, '_duplicate_thread_generation', 0) != generation:
-                        return
-                    res = _evaluate_duplicate_chunk((i, i+1, global_records_data, global_inverted_index, threshold))
-                    pairs_cache.extend(res)
-                    if i % update_interval == 0 or i == n_records - 1:
-                        progress = (i + 1) / n_records
-                        self.after(0, lambda p=progress, g=generation: self._update_duplicate_progress(p, g))
+                num_chunks = max(1, min(100, n_records))
+                chunk_size = max(1, n_records // num_chunks)
+                
+                tasks = []
+                for start_idx in range(0, n_records, chunk_size):
+                    end_idx = min(start_idx + chunk_size, n_records)
+                    tasks.append((start_idx, end_idx, threshold))
+                
+                # Process sequentially using a single worker
+                self.after(0, lambda g=generation: self._update_duplicate_progress(0.0, g))
+                with concurrent.futures.ProcessPoolExecutor(max_workers=1, initializer=_init_worker, initargs=(global_records_data, global_inverted_index)) as executor:
+                    futures = [executor.submit(_evaluate_duplicate_chunk, t) for t in tasks]
+                    pending = set(futures)
+                    
+                    completed_chunks = 0
+                    while pending:
+                        if getattr(self, '_duplicate_thread_generation', 0) != generation or getattr(self, '_cancel_duplicate_computing', False):
+                            executor.shutdown(wait=False, cancel_futures=True)
+                            self.after(0, lambda: self._on_duplicate_thread_done([], generation, cancelled=True))
+                            return
+                        done, pending = concurrent.futures.wait(pending, timeout=0.2, return_when=concurrent.futures.FIRST_COMPLETED)
+                        for future in done:
+                            pairs_cache.extend(future.result())
+                            completed_chunks += 1
+                            progress = completed_chunks / len(tasks)
+                            self.after(0, lambda p=progress, g=generation: self._update_duplicate_progress(p, g))
             
             # Use after() to safely update the GUI thread
             self.after(0, lambda: self._on_duplicate_thread_done(pairs_cache, generation))
@@ -541,12 +577,21 @@ class DuplicateEngineMixin:
             text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
             self._duplicate_popup_lbl.configure(text=text)
 
-    def _on_duplicate_thread_done(self, computed_cache, generation):
+    def _on_duplicate_thread_done(self, computed_cache, generation, cancelled=False):
         # If a new thread has been started, ignore this old thread's result
         if getattr(self, '_duplicate_thread_generation', 0) != generation:
             return
             
         self._duplicate_computing = False
+        
+        if cancelled:
+            # When cancelled, keep existing cache if any, but stop the popup
+            if hasattr(self, '_duplicate_popup_lbl') and self._duplicate_popup_lbl.winfo_exists():
+                # We can't destroy the whole popup directly without a ref, but it usually gets overwritten 
+                # or destroyed when the user re-opens it. We just reset the calculating state.
+                self._duplicate_popup_lbl.configure(text="❌ Calculation Cancelled")
+            return
+            
         self._raw_duplicate_pairs_cache = computed_cache
         self._duplicate_pairs_cache = computed_cache
         # Load non duplicates

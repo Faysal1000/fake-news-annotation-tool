@@ -269,6 +269,8 @@ class AnnotateModeMixin:
         # Invalidate duplicate cache so it recomputes with the new record
         self._cancel_duplicate_computing = True
         self._duplicate_pairs_cache = None
+        self._cached_records_data = None
+        self.after(200, lambda: self._compute_global_duplicates(force_restart=True))
         
         self._update_stats()
         self._clear_fields()
@@ -344,7 +346,9 @@ class AnnotateModeMixin:
                 )
                 if not confirm:
                     return
+        import os
         self.destroy()
+        os._exit(0)
 
     def _save_draft(self):
         """
