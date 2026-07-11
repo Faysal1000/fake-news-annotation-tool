@@ -201,22 +201,27 @@ class DuplicateUIMixin:
         use_mp = self._get_duplicate_multiprocessing()
         current_progress = getattr(self, '_current_duplicate_progress', 0.0)
         
+        title_label = ctk.CTkLabel(
+            header_inner, text="", font=ctk.CTkFont(size=16, weight="bold"), text_color="#f39c12"
+        )
+        title_label.pack(side="top", expand=True, pady=12)
+
+        def update_title_label(text=None):
+            if text:
+                title_label.configure(text=text)
+            else:
+                marked_c = len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])
+                dup_c = len(self._duplicate_pairs_cache or [])
+                title_label.configure(text=f"⚠️ {dup_c:,} Potential Duplicates ({marked_c} marked as non-duplicate)")
+
         if is_computing:
             if current_progress > 0.0:
                 pct = int(current_progress * 100)
-                header_title = f"🔄 Recalculating duplicates... {pct}%"
+                update_title_label(f"🔄 Recalculating duplicates... {pct}%")
             else:
-                header_title = "🚀 Initializing multi-core workers..." if use_mp else "⏳ Calculating duplicates..."
+                update_title_label("🚀 Initializing multi-core workers..." if use_mp else "⏳ Calculating duplicates...")
         else:
-            header_title = f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({marked_count} marked as non-duplicate)"
-            
-        title_label = ctk.CTkLabel(
-            header_inner,
-            text=header_title,
-            font=ctk.CTkFont(size=16, weight="bold"),
-            text_color="#f39c12"
-        )
-        title_label.pack(side="top", expand=True, pady=12)
+            update_title_label()
         
         # Main content area split into 4:1 layout
         content_frame = ctk.CTkFrame(popup, fg_color="transparent")
@@ -266,7 +271,7 @@ class DuplicateUIMixin:
             self._duplicate_popup_pb.set(0.0)
             
             # Reset title to calculating
-            title_label.configure(text="🔄 Recalculating duplicates...")
+            update_title_label("🔄 Recalculating duplicates...")
             
             check_computing()
 
@@ -288,7 +293,7 @@ class DuplicateUIMixin:
                     # Rebuild results view
                     non_dups_count = len(self._load_non_duplicates())
                     marked_count = len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])
-                    title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({marked_count} marked as non-duplicate)")
+                    update_title_label()
                     
                     # Update dynamically
                     update_show_marked_label()
@@ -337,8 +342,10 @@ class DuplicateUIMixin:
 
         def update_show_marked_label():
             non_dups_count = len(self._load_non_duplicates())
-            checkbox_text = f"Show Marked ({non_dups_count})" if non_dups_count > 0 else "Show Marked"
-            show_marked_cb.configure(text=checkbox_text)
+            if non_dups_count > 0:
+                show_marked_count_lbl.configure(text=f" ({non_dups_count})")
+            else:
+                show_marked_count_lbl.configure(text="")
 
         def build_results_view(page):
             # Clear left_frame
@@ -474,7 +481,7 @@ class DuplicateUIMixin:
                 
                 if is_marked:
                     ctk.CTkButton(
-                        actions_frame, text="Restore", width=80, height=28,
+                        actions_frame, text="Restore", width=90, height=28,
                         font=ctk.CTkFont(size=11, weight="bold"),
                         fg_color="#e67e22", hover_color="#d35400",
                         corner_radius=6,
@@ -482,7 +489,7 @@ class DuplicateUIMixin:
                             self._unmark_as_non_duplicate(p["record_a"], p["record_b"]),
                             update_show_marked_label(),
                             rebuild_unmark_btn(),
-                            title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])} marked as non-duplicate)"),
+                            update_title_label(),
                             build_results_view(page)
                         ]
                     ).pack(side="right")
@@ -496,7 +503,7 @@ class DuplicateUIMixin:
                             self._mark_as_non_duplicate(p["record_a"], p["record_b"]),
                             update_show_marked_label(),
                             rebuild_unmark_btn(),
-                            title_label.configure(text=f"⚠️ {len(self._duplicate_pairs_cache or []):,} Potential Duplicates ({len(self._raw_duplicate_pairs_cache or []) - len(self._duplicate_pairs_cache or [])} marked as non-duplicate)"),
+                            update_title_label(),
                             build_results_view(page)
                         ]
                     ).pack(side="right")
@@ -571,14 +578,21 @@ class DuplicateUIMixin:
             rebuild_unmark_btn()
             build_results_view(0)
             
-        non_dups_count = len(self._load_non_duplicates())
-        checkbox_text = f"Show Marked ({non_dups_count})" if non_dups_count > 0 else "Show Marked"
+        show_marked_container = ctk.CTkFrame(sidebar_frame, fg_color="transparent")
+        show_marked_container.pack(anchor="w", padx=15, pady=(10, 2))
         
         show_marked_cb = ctk.CTkCheckBox(
-            sidebar_frame, text=checkbox_text, variable=show_marked_var,
+            show_marked_container, text="Show Marked", variable=show_marked_var,
             command=toggle_show_marked, font=ctk.CTkFont(size=12, weight="bold")
         )
-        show_marked_cb.pack(anchor="w", padx=15, pady=(10, 2))
+        show_marked_cb.pack(side="left")
+        
+        show_marked_count_lbl = ctk.CTkLabel(
+            show_marked_container, text="", font=ctk.CTkFont(size=12, weight="bold"), text_color="#f1c40f"
+        )
+        show_marked_count_lbl.pack(side="left")
+        
+        update_show_marked_label()
         
         show_marked_sub = ctk.CTkLabel(
             sidebar_frame, text="Display items marked as non-duplicate.",

@@ -124,7 +124,6 @@ class ModeControllerMixin:
             # Make the record navigation bar, filter, and search widgets visible
             self.nav_frame.grid(row=0, column=0, sticky="ew", padx=(8, 8), pady=6)
             self.filter_btn.pack(side="right", padx=(4, 0))
-            self.filter_indicator.pack(side="right", padx=(4, 0))
             self.search_btn.pack(side="right", padx=(4, 0))
             self._update_filter_indicator()
             
