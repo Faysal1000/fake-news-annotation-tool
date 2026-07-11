@@ -20,6 +20,7 @@ class DialogMixin:
         
         popup.lift()
         popup.focus_force()
+        popup.wait_visibility()
         popup.grab_set()
         
         result = [None]
@@ -89,6 +90,7 @@ class DialogMixin:
         
         popup.lift()
         popup.focus_force()
+        popup.wait_visibility()
         popup.grab_set()
         
         result = [False]

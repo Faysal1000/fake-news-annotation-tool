@@ -105,8 +105,8 @@ class ReviewModeMixin:
         self.record_total_label.configure(text=f"of {total}")
         
         # Disable navigation buttons at the boundaries of the list to prevent out-of-bounds errors
-        self.prev_btn.configure(state="normal" if index > 0 else "disabled")
-        self.next_btn.configure(state="normal" if index < total - 1 else "disabled")
+        self.after(10, lambda: self.prev_btn.configure(state="normal" if index > 0 else "disabled"))
+        self.after(10, lambda: self.next_btn.configure(state="normal" if index < total - 1 else "disabled"))
 
         # Wipe all existing inputs in the workspace to prepare for the new record's properties
         self._clear_fields()
@@ -284,18 +284,24 @@ class ReviewModeMixin:
         
         # Track changes indicator
         changed = False
-        
+        # Helper function to normalize strings and newlines for safe comparison across OSes
+        def safe_get(key, default=""):
+            val = record.get(key)
+            if val is None:
+                val = default
+            return str(val).replace("\\r\\n", "\\n").replace("\\r", "\\n").strip()
+
         # Check standard textual fields and combobox select values against original values
-        if annotator != (record.get("annotator") or "").strip(): changed = True
-        elif label != (record.get("label") or "").strip(): changed = True
-        elif heading != (record.get("heading") or "").strip(): changed = True
-        elif text != (record.get("text") or "").strip(): changed = True
-        elif source != (record.get("source") or "").strip(): changed = True
-        elif source_category != (record.get("source_category") or "").strip(): changed = True
-        elif category != (record.get("category") or "").strip(): changed = True
-        elif multi_cat != (record.get("multi_category") or "").strip(): changed = True
-        elif confidence != (record.get("annotation_confidence") or "100").strip(): changed = True
-        elif notes != (record.get("additional_notes") or "").strip(): changed = True
+        if annotator != safe_get("annotator"): changed = True
+        elif label != safe_get("label"): changed = True
+        elif heading != safe_get("heading"): changed = True
+        elif text != safe_get("text"): changed = True
+        elif source != safe_get("source"): changed = True
+        elif source_category != safe_get("source_category"): changed = True
+        elif category != safe_get("category"): changed = True
+        elif multi_cat != safe_get("multi_category"): changed = True
+        elif confidence != safe_get("annotation_confidence", "100"): changed = True
+        elif notes != safe_get("additional_notes"): changed = True
         
         # Check image selection list for differences if text comparison did not flag changes
         if not changed:

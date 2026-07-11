@@ -367,8 +367,8 @@ class RelabelModeMixin:
         self.record_total_label.configure(text=f"of {total}")
         
         # Disable navigation buttons at the boundaries of the list to prevent out-of-bounds errors
-        self.prev_btn.configure(state="normal" if index > 0 else "disabled")
-        self.next_btn.configure(state="normal" if index < total - 1 else "disabled")
+        self.after(10, lambda: self.prev_btn.configure(state="normal" if index > 0 else "disabled"))
+        self.after(10, lambda: self.next_btn.configure(state="normal" if index < total - 1 else "disabled"))
 
         # Clear the label selector dropdown inputs
         self.label_var.set("")
