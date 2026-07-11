@@ -284,17 +284,43 @@ class DuplicateEngineMixin:
             return
             
         current_id = None
+        saved_heading = ""
+        saved_text = ""
         if self.current_mode == "review" and self.dataset_records:
             record = self.dataset_records[self.current_review_index]
             current_id = record.get("id")
+            saved_heading = record.get("heading") or ""
+            saved_text = record.get("text") or ""
         current_heading = self._get_heading_text()
         current_text = self.text_box.get("1.0", "end-1c").strip()
-        
+
         # We only check if heading or text is populated
         if not current_heading.strip() and not current_text.strip():
             self._hide_duplicate_warnings()
             return
 
+        # FAST PATH: if this record is unedited (its heading/text still match what
+        # is saved on disk) and the global duplicate pass has already run, reuse
+        # those results with an instant ID lookup instead of recomputing the
+        # similarities on every Prev/Next navigation.
+        def _norm(s):
+            return (s or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        text_unchanged = (_norm(current_heading) == _norm(saved_heading) and
+                          _norm(current_text) == _norm(saved_text))
+        if (text_unchanged and current_id and
+                getattr(self, '_duplicate_pairs_cache', None) is not None):
+            matches = list(getattr(self, '_dup_index_by_id', {}).get(current_id, []))
+            self._current_record_matches = matches
+            # Invalidate any in-flight live worker so its late result is ignored.
+            self._current_inline_dup_check_id = getattr(self, '_current_inline_dup_check_id', 0) + 1
+            if matches:
+                self._update_heading_dup_badge_ui("duplicates_found", count=len(matches))
+            else:
+                self._update_heading_dup_badge_ui("no_duplicates")
+            return
+
+        # SLOW PATH: text was edited (differs from the saved record) or the global
+        # cache is not ready yet -> compute this record's duplicates live below.
         # Show calculating state immediately
         self._update_heading_dup_badge_ui("calculating")
         
@@ -579,6 +605,53 @@ class DuplicateEngineMixin:
             text = f"🔄 Recalculating duplicates... {pct}%\nPlease wait."
             self._duplicate_popup_lbl.configure(text=text)
 
+    def _build_duplicate_id_index(self):
+        """
+        Builds a lookup table mapping each record ID -> its list of duplicate
+        matches, derived from the already-computed global duplicate pairs cache.
+
+        This lets Review Mode show the inline duplicate badge via an instant
+        dictionary lookup during navigation instead of recomputing similarities
+        for every record on every Prev/Next. It is rebuilt whenever the global
+        cache changes (recompute finishes, or non-duplicate marks change).
+
+        Each entry uses the same shape the live inline worker produces, so the
+        "View duplicates" popup and inspection view work unchanged.
+        """
+        index = {}
+        cache = getattr(self, '_duplicate_pairs_cache', None) or []
+        for pair in cache:
+            rec_a = pair.get("record_a") or {}
+            rec_b = pair.get("record_b") or {}
+            id_a = rec_a.get("id")
+            id_b = rec_b.get("id")
+            common = {
+                "similarity": pair.get("similarity", 0.0),
+                "combined_sim": pair.get("combined_sim", 0.0),
+                "heading_sim": pair.get("heading_sim", 0.0),
+                "text_sim": pair.get("text_sim", 0.0),
+            }
+            # From record A's perspective the partner is record B, and vice versa.
+            if id_a:
+                m = dict(common)
+                m["row_num"] = (pair.get("idx_b", 0) or 0) + 1
+                m["record"] = rec_b
+                m["new_heading_ref"] = rec_a.get("heading", "")
+                m["new_text_ref"] = rec_a.get("text", "")
+                index.setdefault(id_a, []).append(m)
+            if id_b:
+                m = dict(common)
+                m["row_num"] = (pair.get("idx_a", 0) or 0) + 1
+                m["record"] = rec_a
+                m["new_heading_ref"] = rec_b.get("heading", "")
+                m["new_text_ref"] = rec_b.get("text", "")
+                index.setdefault(id_b, []).append(m)
+
+        for matches in index.values():
+            matches.sort(key=lambda x: x["similarity"], reverse=True)
+
+        self._dup_index_by_id = index
+
     def _on_duplicate_thread_done(self, computed_cache, generation, cancelled=False):
         # If a new thread has been started, ignore this old thread's result
         if getattr(self, '_duplicate_thread_generation', 0) != generation:
@@ -600,6 +673,8 @@ class DuplicateEngineMixin:
             non_dups = self._load_non_duplicates()
             if non_dups:
                 self._apply_non_duplicates_filter()
+            # Rebuild the per-record ID lookup so navigation reuses these results.
+            self._build_duplicate_id_index()
             self._update_stats()
         except Exception as e:
             print(f"Error finishing duplicate computation: {e}")
@@ -656,19 +731,21 @@ class DuplicateEngineMixin:
         non_dups = self._load_non_duplicates()
         if not non_dups:
             self._duplicate_pairs_cache = list(self._raw_duplicate_pairs_cache)
+            self._build_duplicate_id_index()
             return
-            
+
         filtered_cache = []
         for pair in self._raw_duplicate_pairs_cache:
             id_a = str(pair["record_a"].get("id", ""))
             id_b = str(pair["record_b"].get("id", ""))
-            
+
             # Create a consistent pair key regardless of order
             pair_key = f"{min(id_a, id_b)}_{max(id_a, id_b)}"
             if pair_key not in non_dups:
                 filtered_cache.append(pair)
-                
+
         self._duplicate_pairs_cache = filtered_cache
+        self._build_duplicate_id_index()
 
     def _mark_as_non_duplicate(self, record_a, record_b):
         id_a = str(record_a.get("id", ""))
