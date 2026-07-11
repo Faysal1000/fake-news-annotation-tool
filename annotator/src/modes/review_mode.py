@@ -636,7 +636,7 @@ class ReviewModeMixin:
                 record["timestamp"] = datetime.now().isoformat()
     
             # Commit the updated list values to dataset.csv
-            self._rewrite_csv()
+            self._rewrite_csv(updated_record_id=record.get("id"))
         except Exception as e:
             # Notify on OS-level errors (like files locked by external editors)
             messagebox.showerror("Update Error", f"Failed to update entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
@@ -700,17 +700,25 @@ class ReviewModeMixin:
             self._toggle_mode("📝 Annotate")
             return
 
-    def _rewrite_csv(self):
+    def _rewrite_csv(self, updated_record_id=None):
         """
         Rewrites the entire dataset CSV file from the general records database list.
         """
-        # Invalidate global duplicates cache since the dataset content has changed
-        self._cancel_duplicate_computing = True
-        if hasattr(self, '_duplicate_computing'):
-            self._duplicate_computing = False
-        self._duplicate_pairs_cache = None
-        self._cached_records_data = None
-        self.after(200, lambda: self._compute_global_duplicates(force_restart=True))
+        # Try the fast incremental update first if an ID was provided
+        if updated_record_id and hasattr(self, '_incremental_update_duplicates'):
+            success = self._incremental_update_duplicates(updated_record_id)
+        else:
+            success = False
+
+        # If it failed or wasn't an edit, do the slow full recalculation
+        if not success:
+            # Invalidate global duplicates cache since the dataset content has changed
+            self._cancel_duplicate_computing = True
+            if hasattr(self, '_duplicate_computing'):
+                self._duplicate_computing = False
+            self._duplicate_pairs_cache = None
+            self._cached_records_data = None
+            self.after(200, lambda: self._compute_global_duplicates(force_restart=True))
 
         # Open CSV file with standard settings: newline protection and utf-8 encoding support
 

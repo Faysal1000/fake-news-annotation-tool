@@ -25,6 +25,68 @@ def _init_worker(records, index):
     _worker_records = records
     _worker_index = index
 
+def _evaluate_pair(data_i, data_j, intersection_len, i, j, threshold):
+    """
+    Computes the similarity between two precomputed record entries and returns a
+    duplicate-pair dict (idx_a=i, idx_b=j) if the max similarity meets threshold,
+    else None.
+
+    This is the single source of truth for pair similarity. It is called by both
+    the background chunk worker (_evaluate_duplicate_chunk) and the incremental
+    single-record updater (_incremental_update_duplicates), so their results are
+    guaranteed identical. Callers must pass i/j in the same orientation the full
+    scan uses (i < j) because text containment is direction-sensitive.
+    """
+    words_i_comb = data_i["words_combined"]
+    words_j_comb = data_j["words_combined"]
+
+    union_len = len(words_i_comb) + len(words_j_comb) - intersection_len
+    combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
+
+    combined_containment = 0.0
+    if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
+        containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
+        containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
+        combined_containment = max(containment_i_j, containment_j_i)
+
+    combined_sim = max(combined_jaccard, combined_containment)
+
+    heading_sim = 0.0
+    h_i = data_i["heading"]
+    h_j = data_j["heading"]
+    if h_i and h_j:
+        words_i_h = data_i["words_heading"]
+        words_j_h = data_j["words_heading"]
+        if len(words_i_h.intersection(words_j_h)) > 0 or len(h_i) < 20 or len(h_j) < 20:
+            ratio = difflib.SequenceMatcher(None, h_i.lower(), h_j.lower()).ratio()
+            u_h = len(words_i_h.union(words_j_h))
+            jacc_h = len(words_i_h.intersection(words_j_h)) / u_h if u_h > 0 else 0.0
+            heading_sim = max(ratio, jacc_h)
+
+    text_sim = 0.0
+    words_i_t = data_i["words_text"]
+    words_j_t = data_j["words_text"]
+    if words_i_t and words_j_t:
+        intersection_t = len(words_i_t.intersection(words_j_t))
+        union_t = len(words_i_t.union(words_j_t))
+        text_jaccard = intersection_t / union_t if union_t > 0 else 0.0
+        text_containment = intersection_t / len(words_i_t) if len(words_i_t) > 0 else 0.0
+        text_sim = max(text_jaccard, text_containment)
+
+    max_sim = max(combined_sim, heading_sim, text_sim)
+    if max_sim >= threshold:
+        return {
+            "idx_a": i,
+            "idx_b": j,
+            "record_a": data_i["record"],
+            "record_b": data_j["record"],
+            "similarity": max_sim,
+            "combined_sim": combined_sim,
+            "heading_sim": heading_sim,
+            "text_sim": text_sim
+        }
+    return None
+
 def _evaluate_duplicate_chunk(args):
     if len(args) == 5:
         start_idx, end_idx, global_records_data, global_inverted_index, threshold = args
@@ -52,54 +114,10 @@ def _evaluate_duplicate_chunk(args):
         # Evaluate candidates
         for j, intersection_len in candidates.items():
             data_j = global_records_data[j]
-            words_j_comb = data_j["words_combined"]
-            
-            union_len = len(words_i_comb) + len(words_j_comb) - intersection_len
-            combined_jaccard = intersection_len / union_len if union_len > 0 else 0.0
-            
-            combined_containment = 0.0
-            if len(words_i_comb) >= 30 and len(words_j_comb) >= 30:
-                containment_i_j = intersection_len / len(words_i_comb) if len(words_i_comb) > 0 else 0.0
-                containment_j_i = intersection_len / len(words_j_comb) if len(words_j_comb) > 0 else 0.0
-                combined_containment = max(containment_i_j, containment_j_i)
-                
-            combined_sim = max(combined_jaccard, combined_containment)
-            
-            heading_sim = 0.0
-            h_i = data_i["heading"]
-            h_j = data_j["heading"]
-            if h_i and h_j:
-                words_i_h = data_i["words_heading"]
-                words_j_h = data_j["words_heading"]
-                if len(words_i_h.intersection(words_j_h)) > 0 or len(h_i) < 20 or len(h_j) < 20:
-                    ratio = difflib.SequenceMatcher(None, h_i.lower(), h_j.lower()).ratio()
-                    u_h = len(words_i_h.union(words_j_h))
-                    jacc_h = len(words_i_h.intersection(words_j_h)) / u_h if u_h > 0 else 0.0
-                    heading_sim = max(ratio, jacc_h)
-                    
-            text_sim = 0.0
-            words_i_t = data_i["words_text"]
-            words_j_t = data_j["words_text"]
-            if words_i_t and words_j_t:
-                intersection_t = len(words_i_t.intersection(words_j_t))
-                union_t = len(words_i_t.union(words_j_t))
-                text_jaccard = intersection_t / union_t if union_t > 0 else 0.0
-                text_containment = intersection_t / len(words_i_t) if len(words_i_t) > 0 else 0.0
-                text_sim = max(text_jaccard, text_containment)
-                
-            max_sim = max(combined_sim, heading_sim, text_sim)
-            if max_sim >= threshold:
-                pairs_cache.append({
-                    "idx_a": i,
-                    "idx_b": j,
-                    "record_a": data_i["record"],
-                    "record_b": data_j["record"],
-                    "similarity": max_sim,
-                    "combined_sim": combined_sim,
-                    "heading_sim": heading_sim,
-                    "text_sim": text_sim
-                })
-                
+            pair = _evaluate_pair(data_i, data_j, intersection_len, i, j, threshold)
+            if pair is not None:
+                pairs_cache.append(pair)
+
     return pairs_cache
 
 class DuplicateEngineMixin:
@@ -651,6 +669,138 @@ class DuplicateEngineMixin:
             matches.sort(key=lambda x: x["similarity"], reverse=True)
 
         self._dup_index_by_id = index
+
+    def _incremental_update_duplicates(self, record_id):
+        """
+        Patches the global duplicate cache in place after a SINGLE record's
+        heading/text changed, instead of rescanning the entire dataset.
+
+        This is only valid when the edit did not add, remove, or reorder records
+        (so all indices stay stable) and a complete global pass has already run.
+        Any precondition miss returns False, and the caller falls back to the
+        normal full recompute — so this can only speed things up, never corrupt.
+
+        Correctness: k's pairs are recomputed with the exact same _evaluate_pair
+        used by the full background scan, in the same (lower-index-first)
+        orientation, so the resulting cache is identical to a full rescan.
+
+        Returns True if the incremental update was applied, False otherwise.
+        """
+        # Never patch while a full background pass is mid-flight; its result
+        # would race/overwrite ours. Let the caller do a full recompute instead.
+        if getattr(self, '_duplicate_computing', False):
+            return False
+
+        cached = getattr(self, '_cached_records_data', None)
+        inv = getattr(self, '_cached_inverted_index', None)
+        raw = getattr(self, '_raw_duplicate_pairs_cache', None)
+
+        # Require a completed global pass and coherent precomputed structures.
+        if cached is None or inv is None or raw is None or not isinstance(raw, list):
+            return False
+        if not record_id:
+            return False
+
+        records = self._get_all_records_for_dup_check()
+        # A length mismatch means the dataset changed structurally (add/delete);
+        # indices are no longer aligned, so a full rescan is required.
+        if len(cached) != len(records):
+            return False
+
+        # Locate the edited record's stable index by ID.
+        k = None
+        for idx, data in enumerate(cached):
+            if data["record"].get("id") == record_id:
+                k = idx
+                break
+        if k is None:
+            return False
+
+        try:
+            threshold = self._get_duplicate_threshold() / 100.0
+            rec = records[k]
+
+            # Recompute the edited record's cleaned word sets from its new content.
+            h = rec.get("heading", "") or ""
+            t = rec.get("text", "") or ""
+            comb = f"{h} {t}".strip()
+            new_words_comb = set(clean_text(comb))
+            new_words_h = set(clean_text(h))
+            new_words_t = set(clean_text(t))
+
+            old_words_comb = cached[k]["words_combined"]
+
+            # Update the inverted index incrementally: drop k from words it no
+            # longer contains, add k to newly introduced words. Words present in
+            # both keep k already, so they need no change.
+            for w in old_words_comb - new_words_comb:
+                lst = inv.get(w)
+                if lst and k in lst:
+                    lst.remove(k)
+            for w in new_words_comb - old_words_comb:
+                inv.setdefault(w, []).append(k)
+
+            # Replace k's cached data entry (same shape as _get_precomputed_data).
+            new_data_k = {
+                "idx": k,
+                "record": rec,
+                "heading": h,
+                "text": t,
+                "combined": comb,
+                "words_combined": new_words_comb,
+                "words_heading": new_words_h,
+                "words_text": new_words_t,
+            }
+            cached[k] = new_data_k
+
+            # Drop every existing pair that involves k; we will regenerate them.
+            new_raw = [p for p in raw if p.get("idx_a") != k and p.get("idx_b") != k]
+
+            # Find candidates sharing at least one word with k's new content.
+            # The count per candidate equals |words_k ∩ words_candidate| because
+            # words_combined is a set, matching the full scan's candidate counting.
+            candidates = {}
+            for w in new_words_comb:
+                lst = inv.get(w)
+                if not lst:
+                    continue
+                for j in lst:
+                    if j != k:
+                        candidates[j] = candidates.get(j, 0) + 1
+
+            # Evaluate each candidate, preserving the full scan's orientation
+            # (lower index is passed as i) so direction-sensitive text
+            # containment produces identical scores.
+            for j, inter in candidates.items():
+                data_j = cached[j]
+                if k < j:
+                    pair = _evaluate_pair(new_data_k, data_j, inter, k, j, threshold)
+                else:
+                    pair = _evaluate_pair(data_j, new_data_k, inter, j, k, threshold)
+                if pair is not None:
+                    new_raw.append(pair)
+
+            # Supersede any queued/finishing background pass so its stale result
+            # cannot overwrite this one (generation guard in _on_duplicate_thread_done).
+            if not hasattr(self, '_duplicate_thread_generation'):
+                self._duplicate_thread_generation = 0
+            self._duplicate_thread_generation += 1
+            self._cancel_duplicate_computing = True
+
+            # Commit the new raw cache and refresh the filtered view + ID index.
+            self._raw_duplicate_pairs_cache = new_raw
+            self._duplicate_pairs_cache = list(new_raw)
+            # Re-apply non-duplicate marks; this rebuilds the ID index when there
+            # are pairs. When empty, it early-returns, so rebuild the index here.
+            self._apply_non_duplicates_filter()
+            if not new_raw:
+                self._build_duplicate_id_index()
+            self._update_stats()
+            return True
+        except Exception as e:
+            # Any failure -> report False so the caller does a safe full recompute.
+            print(f"[WARNING] Incremental duplicate update failed, falling back to full rescan: {e}")
+            return False
 
     def _on_duplicate_thread_done(self, computed_cache, generation, cancelled=False):
         # If a new thread has been started, ignore this old thread's result
