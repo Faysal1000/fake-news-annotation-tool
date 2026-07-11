@@ -289,7 +289,7 @@ class ReviewModeMixin:
             val = record.get(key)
             if val is None:
                 val = default
-            return str(val).replace("\\r\\n", "\\n").replace("\\r", "\\n").strip()
+            return str(val).replace("\r\n", "\n").replace("\r", "\n").strip()
 
         # Check standard textual fields and combobox select values against original values
         if annotator != safe_get("annotator"): changed = True
@@ -389,15 +389,26 @@ class ReviewModeMixin:
         if self.current_mode == "relabel":
             self._kappa_next_record()
             return
-            
+
+        # Re-entrancy guard: block a second navigation while one is in flight.
+        # The unsaved-changes prompt runs a nested event loop (wait_window), so a
+        # queued arrow-key repeat could otherwise re-enter here and stack modal
+        # dialogs, which deadlocks the main thread.
+        if getattr(self, "_nav_busy", False):
+            return
+
         # Ensure we are not already at the end of the loaded review subset
         if self.current_review_index < len(self.dataset_records) - 1:
-            # Prompt user to resolve any unsaved changes before moving to the next record
-            if not self._check_unsaved_changes():
-                return
-            # Increment index pointer and refresh UI layout fields with the next record
-            self.current_review_index += 1
-            self._display_record(self.current_review_index)
+            self._nav_busy = True
+            try:
+                # Prompt user to resolve any unsaved changes before moving to the next record
+                if not self._check_unsaved_changes():
+                    return
+                # Increment index pointer and refresh UI layout fields with the next record
+                self.current_review_index += 1
+                self._display_record(self.current_review_index)
+            finally:
+                self._nav_busy = False
 
     def _prev_record(self):
         """
@@ -411,15 +422,24 @@ class ReviewModeMixin:
         if self.current_mode == "relabel":
             self._kappa_prev_record()
             return
-            
+
+        # Re-entrancy guard (see _next_record): prevent stacked navigation /
+        # modal dialogs from a nested event loop, which freezes the main thread.
+        if getattr(self, "_nav_busy", False):
+            return
+
         # Ensure we are not already at the beginning of the loaded review subset
         if self.current_review_index > 0:
-            # Prompt user to resolve any unsaved changes before moving to the previous record
-            if not self._check_unsaved_changes():
-                return
-            # Decrement index pointer and refresh UI layout fields with the previous record
-            self.current_review_index -= 1
-            self._display_record(self.current_review_index)
+            self._nav_busy = True
+            try:
+                # Prompt user to resolve any unsaved changes before moving to the previous record
+                if not self._check_unsaved_changes():
+                    return
+                # Decrement index pointer and refresh UI layout fields with the previous record
+                self.current_review_index -= 1
+                self._display_record(self.current_review_index)
+            finally:
+                self._nav_busy = False
 
     def _jump_to_record(self, event=None):
         """
@@ -433,13 +453,19 @@ class ReviewModeMixin:
         if self.current_mode == "relabel":
             self._kappa_jump_to_record(event)
             return
-            
+
+        # Re-entrancy guard (see _next_record): the unsaved-changes prompt runs a
+        # nested event loop, so refuse to start a second jump while one is active.
+        if getattr(self, "_nav_busy", False):
+            return
+
+        self._nav_busy = True
         try:
             # Parse the user entry value as a 1-based record number
             val = int(self.record_index_entry.get().strip())
             # Convert to zero-based array index
             idx = val - 1
-            
+
             # Ensure the targeted index lies within the boundaries of the active review list
             if 0 <= idx < len(self.dataset_records):
                 # Only execute jump operations if the target index differs from the active one
@@ -465,6 +491,8 @@ class ReviewModeMixin:
             # Revert to current record indicator if user inputs a non-integer string
             self.record_index_entry.delete(0, "end")
             self.record_index_entry.insert(0, str(self.current_review_index + 1))
+        finally:
+            self._nav_busy = False
 
     def _update_entry(self, show_success=True):
         """
