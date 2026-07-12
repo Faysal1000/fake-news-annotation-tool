@@ -145,7 +145,8 @@ class FilterMixin:
             if f.get("min_conf") is not None or f.get("max_conf") is not None: count += 1
             self.filter_indicator.configure(text=f"⚡ {count} filter(s)")
             self.filter_btn.configure(fg_color="#4a3f00", border_color="#f39c12")
-            self.filter_indicator.pack(side="right", padx=(4, 0), after=self.filter_btn)
+            if self.filter_btn.winfo_manager():
+                self.filter_indicator.pack(side="right", padx=(4, 0), after=self.filter_btn)
         else:
             self.filter_indicator.pack_forget()
             self.filter_btn.configure(fg_color="#2d2d5e", border_color="#555")
