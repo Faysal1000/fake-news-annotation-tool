@@ -50,7 +50,7 @@ mkdir -p ~/Desktop/"Fake News Dataset" && cd ~/Desktop/"Fake News Dataset" && cu
 You can switch between the app's three primary modes using the dropdown switcher at the top left of the screen:
 
 - **Annotate Mode**: Add new entries to the dataset. Select labels, add text, drag-and-drop media, quickly Google search headings, and save.
-- **Review Mode**: Browse through your saved annotations. You can edit mistakes, delete entries, search and filter entries by keywords, and view attached media in full resolution.
+- **Review Mode**: Browse through your saved annotations. You can edit mistakes, delete entries, search and filter entries by various criteria (keywords, labels, video duration), and view attached media in full resolution.
 - **Re-label Mode**: Conduct inter-rater reliability tests. Browse a pre-generated sample of records with the previous labels hidden to prevent bias.
 - **📊 Detailed Stats**: Click the button at the top to open a comprehensive, interactive dashboard. Click row/column headers to dynamically calculate multi-modal distribution percentages.
 

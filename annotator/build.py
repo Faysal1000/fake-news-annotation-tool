@@ -56,8 +56,20 @@ def build():
         f"--specpath={spec_path}",                       # Output spec directory
         "--noconfirm",                      # Overwrite previous build without asking
         "--clean",                          # Clean cache before building
-        main_path,                          # The entry point script to bundle
     ]
+
+    # OpenCV powers the video-duration filter for non-mp4 containers. It is an
+    # optional dependency: only bundle it when it is installed in the build env,
+    # so a machine without opencv can still produce a working build (mp4/mov
+    # durations are read without it).
+    try:
+        import cv2  # noqa: F401
+        cmd += ["--collect-all", "cv2"]
+    except Exception:
+        print("[INFO] opencv not found in build env; non-mp4 duration probing "
+              "will be unavailable in this build.")
+
+    cmd.append(main_path)  # The entry point script to bundle
 
     print(f"Building for {platform.system()} ({platform.machine()})...")
     print(f"Command: {' '.join(cmd)}\n")

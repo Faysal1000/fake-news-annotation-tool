@@ -154,7 +154,11 @@ class AnnotatorTool(
         # Holds the active filtered subset of records based on the filter constraints
         self.dataset_records = []
         # Active filter parameters used for restricting records shown in Review mode
-        self.advanced_filter = None  
+        self.advanced_filter = None
+        # Cache mapping a record's video_path (relative string) -> probed duration in
+        # seconds, or None when the duration could not be determined. Populated lazily
+        # by the video duration filter so repeated filtering never re-probes a file.
+        self._video_duration_cache = {}
         # Current index in the dataset_records list being viewed
         self.current_review_index = 0
         # Stores user progress draft when switching between different views

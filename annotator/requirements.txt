@@ -2,3 +2,6 @@ customtkinter>=5.2.0
 Pillow>=10.0.0
 tkinterdnd2>=0.4.0
 requests>=2.25.0
+# Used by the Review-mode video duration filter to read the length of any
+# non-mp4 container (mkv, avi, webm, ...). .mp4/.mov are read without it.
+opencv-python-headless>=4.5.0
