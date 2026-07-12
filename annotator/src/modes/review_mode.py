@@ -567,6 +567,12 @@ class ReviewModeMixin:
 
         # Retrieve entry ID and sanitize the annotator name for safe filename conversions
         record = self.dataset_records[self.current_review_index]
+        
+        # Capture the old media paths before update to clean them up if they are removed
+        old_video = (record.get("video_path") or "").strip()
+        old_images = record.get("image_path") or ""
+        old_image_list = [p.strip() for p in old_images.split(";") if p.strip()]
+
         entry_id = record.get("id") or generate_id()
         sanitized_annotator = sanitize_name(annotator)
 
@@ -637,6 +643,38 @@ class ReviewModeMixin:
     
             # Commit the updated list values to dataset.csv
             self._rewrite_csv(updated_record_id=record.get("id"))
+
+            # Identify which media files were removed
+            removed_media_paths = []
+            if old_video and old_video != video_rel_path:
+                removed_media_paths.append(old_video)
+            for old_img in old_image_list:
+                if old_img not in image_rel_paths:
+                    removed_media_paths.append(old_img)
+            
+            # Clean up the removed media files if no other record references them
+            for rel_path in removed_media_paths:
+                is_referenced = False
+                for other_rec in self.all_dataset_records:
+                    # other_rec already has the updated paths for the current record since we modified the dictionary inline
+                    other_video = (other_rec.get("video_path") or "").strip()
+                    if other_video == rel_path:
+                        is_referenced = True
+                        break
+                    other_images = other_rec.get("image_path") or ""
+                    if other_images:
+                        other_image_list_chk = [img_p.strip() for img_p in other_images.split(";") if img_p.strip()]
+                        if rel_path in other_image_list_chk:
+                            is_referenced = True
+                            break
+                
+                if not is_referenced:
+                    full_path = SCRIPT_DIR / rel_path
+                    if full_path.exists() and full_path.is_file():
+                        try:
+                            full_path.unlink()
+                        except Exception as e:
+                            print(f"[WARNING] Failed to delete orphaned media file {full_path}: {e}")
         except Exception as e:
             # Notify on OS-level errors (like files locked by external editors)
             messagebox.showerror("Update Error", f"Failed to update entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
@@ -689,6 +727,47 @@ class ReviewModeMixin:
                 self.all_dataset_records.insert(all_idx, deleted_record)
             messagebox.showerror("Delete Error", f"Failed to delete entry. Please make sure the dataset CSV file is not open in Excel or another program.\n\nError: {e}")
             return
+
+        # Delete unreferenced associated media files on disk
+        media_paths_to_check = []
+        video_path_str = deleted_record.get("video_path") or ""
+        if video_path_str:
+            video_path_str = video_path_str.strip()
+            if video_path_str:
+                media_paths_to_check.append(video_path_str)
+        
+        image_paths_str = deleted_record.get("image_path") or ""
+        if image_paths_str:
+            for p in image_paths_str.split(";"):
+                p = p.strip()
+                if p:
+                    media_paths_to_check.append(p)
+                    
+        for rel_path in media_paths_to_check:
+            # Check if this relative path is referenced by any other record in all_dataset_records
+            is_referenced = False
+            for record in self.all_dataset_records:
+                # Compare video path
+                other_video = (record.get("video_path") or "").strip()
+                if other_video == rel_path:
+                    is_referenced = True
+                    break
+                # Compare image paths
+                other_images = record.get("image_path") or ""
+                if other_images:
+                    other_image_list = [img_p.strip() for img_p in other_images.split(";") if img_p.strip()]
+                    if rel_path in other_image_list:
+                        is_referenced = True
+                        break
+            
+            # If no other record references it, delete it from SCRIPT_DIR
+            if not is_referenced:
+                full_path = SCRIPT_DIR / rel_path
+                if full_path.exists() and full_path.is_file():
+                    try:
+                        full_path.unlink()
+                    except Exception as e:
+                        print(f"[WARNING] Failed to delete orphaned media file {full_path}: {e}")
 
         # Re-apply filter settings to refresh review index pointers and layout lists
         self._apply_advanced_filter(keep_index=True)

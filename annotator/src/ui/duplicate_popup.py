@@ -792,6 +792,47 @@ class DuplicateUIMixin:
                     messagebox.showerror("Delete Error", f"Failed to delete entry.\n\nError: {e}")
                     return
                 
+                # Delete unreferenced associated media files on disk
+                media_paths_to_check = []
+                video_path_str = record.get("video_path") or ""
+                if video_path_str:
+                    video_path_str = video_path_str.strip()
+                    if video_path_str:
+                        media_paths_to_check.append(video_path_str)
+                
+                image_paths_str = record.get("image_path") or ""
+                if image_paths_str:
+                    for p in image_paths_str.split(";"):
+                        p = p.strip()
+                        if p:
+                            media_paths_to_check.append(p)
+                            
+                for rel_path in media_paths_to_check:
+                    # Check if this relative path is referenced by any other record in all_dataset_records
+                    is_referenced = False
+                    for rec_other in self.all_dataset_records:
+                        # Compare video path
+                        other_video = (rec_other.get("video_path") or "").strip()
+                        if other_video == rel_path:
+                            is_referenced = True
+                            break
+                        # Compare image paths
+                        other_images = rec_other.get("image_path") or ""
+                        if other_images:
+                            other_image_list = [img_p.strip() for img_p in other_images.split(";") if img_p.strip()]
+                            if rel_path in other_image_list:
+                                is_referenced = True
+                                break
+                    
+                    # If no other record references it, delete it from SCRIPT_DIR
+                    if not is_referenced:
+                        full_path = SCRIPT_DIR / rel_path
+                        if full_path.exists() and full_path.is_file():
+                            try:
+                                full_path.unlink()
+                            except Exception as e:
+                                print(f"[WARNING] Failed to delete orphaned media file {full_path}: {e}")
+
                 # Refresh the view
                 self._apply_advanced_filter(keep_index=True)
                 
